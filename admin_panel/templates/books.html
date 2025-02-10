@@ -1,0 +1,380 @@
+{% extends "base.html" %}
+
+{% block title %}Управление книгами - Library Admin{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <!-- Сводка -->
+    <div class="row mb-4">
+        <div class="col-md-4">
+            <div class="card shadow-sm">
+                <div class="card-body text-center">
+                    <h5 class="card-title text-primary mb-3">
+                        <span class="fs-2">📚</span><br>
+                        Всего книг
+                    </h5>
+                    <p class="card-text display-6 mb-0">{{ total_books }}</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card shadow-sm">
+                <div class="card-body text-center">
+                    <h5 class="card-title text-success mb-3">
+                        <span class="fs-2">📖</span><br>
+                        Всего экземпляров
+                    </h5>
+                    <p class="card-text display-6 mb-0">{{ total_copies }}</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card shadow-sm">
+                <div class="card-body text-center">
+                    <h5 class="card-title text-warning mb-3">
+                        <span class="fs-2">📘</span><br>
+                        Выдано
+                    </h5>
+                    <p class="card-text display-6 mb-0">{{ borrowed_copies }}</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Поиск -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <div class="row g-3">
+                <div class="col-md-8">
+                    <div class="input-group">
+                        <span class="input-group-text bg-primary text-white">
+                            <i class="fas fa-search">🔍</i>
+                        </span>
+                        <input type="text" 
+                               class="form-control border-primary" 
+                               id="searchInput" 
+                               placeholder="Поиск по названию или автору..."
+                               value="{{ search_query }}">
+                    </div>
+                </div>
+                <div class="col-md-4 text-end">
+                    <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#bookModal">
+                        ➕ Добавить книгу
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Таблица книг -->
+    <div class="table-responsive">
+        <table class="table table-striped">
+            <thead>
+                <tr>
+                    <th>Название</th>
+                    <th>Автор</th>
+                    <th>Тематика</th>
+                    <th>Описание</th>
+                    <th>Доступно/Всего</th>
+                    <th>Средняя цена</th>
+                    <th>Действия</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for book in books %}
+                <tr>
+                    <td>{{ book.title }}</td>
+                    <td>{{ book.author }}</td>
+                    <td>{{ book.theme or '—' }}</td>
+                    <td>{{ book.description }}</td>
+                    <td>{{ book.available_copies }}/{{ book.total_copies }}</td>
+                    <td>
+                        {% if book.avg_price > 0 %}
+                            {{ book.avg_price }} ₽
+                        {% else %}
+                            <span class="text-muted">—</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <button class="btn btn-sm btn-primary" 
+                                onclick='editBook({{ book.id }}, {{ book.title|tojson }}, {{ book.author|tojson }}, {{ book.description|tojson }}, {{ book.theme|tojson if book.theme else "null"|tojson }})' 
+                                data-bs-toggle="tooltip" 
+                                title="Редактировать">
+                            ✏️
+                        </button>
+                        <button class="btn btn-sm btn-danger" onclick="deleteBook({{ book.id }})" data-bs-toggle="tooltip" title="Удалить">🗑️</button>
+                        <button class="btn btn-sm btn-warning" onclick="managePurchases({{ book.id }})" data-bs-toggle="tooltip" title="Управление закупками">📦</button>
+                        <a href="/books/{{ book.id }}/qrcodes" class="btn btn-sm btn-info" data-bs-toggle="tooltip" title="QR коды">🔍</a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Пагинация -->
+    {% if total_pages > 1 %}
+    <nav aria-label="Page navigation" class="mt-4">
+        <ul class="pagination justify-content-center">
+            <li class="page-item {% if current_page == 1 %}disabled{% endif %}">
+                <a class="page-link" href="?page=1&search={{ search_query }}" aria-label="First">
+                    <span aria-hidden="true">««</span>
+                </a>
+            </li>
+            <li class="page-item {% if current_page == 1 %}disabled{% endif %}">
+                <a class="page-link" href="?page={{ current_page - 1 }}&search={{ search_query }}" aria-label="Previous">
+                    <span aria-hidden="true">«</span>
+                </a>
+            </li>
+            
+            {% for page in range(max(1, current_page - 2), min(total_pages + 1, current_page + 3)) %}
+            <li class="page-item {% if page == current_page %}active{% endif %}">
+                <a class="page-link" href="?page={{ page }}&search={{ search_query }}">{{ page }}</a>
+            </li>
+            {% endfor %}
+            
+            <li class="page-item {% if current_page == total_pages %}disabled{% endif %}">
+                <a class="page-link" href="?page={{ current_page + 1 }}&search={{ search_query }}" aria-label="Next">
+                    <span aria-hidden="true">»</span>
+                </a>
+            </li>
+            <li class="page-item {% if current_page == total_pages %}disabled{% endif %}">
+                <a class="page-link" href="?page={{ total_pages }}&search={{ search_query }}" aria-label="Last">
+                    <span aria-hidden="true">»»</span>
+                </a>
+            </li>
+        </ul>
+    </nav>
+    {% endif %}
+</div>
+
+<!-- Модальное окно добавления/редактирования книги -->
+<div class="modal fade" id="bookModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="modalTitle">Добавить книгу</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form id="bookForm">
+                <div class="modal-body">
+                    <input type="hidden" id="bookId" name="id">
+                    <div class="mb-3">
+                        <label class="form-label">Название</label>
+                        <input type="text" class="form-control" id="title" name="title" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Автор</label>
+                        <input type="text" class="form-control" id="author" name="author" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Тематика</label>
+                        <select class="form-select" id="theme" name="theme" required>
+                            <option value="">Выберите тематику</option>
+                            <option value="Художественная литература">Художественная литература</option>
+                            <option value="Научная литература">Научная литература</option>
+                            <option value="Учебная литература">Учебная литература</option>
+                            <option value="Техническая литература">Техническая литература</option>
+                            <option value="Детская литература">Детская литература</option>
+                            <option value="Справочная литература">Справочная литература</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Описание</label>
+                        <textarea class="form-control" id="description" name="description" rows="3"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                    <button type="submit" class="btn btn-primary">Сохранить</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Модальное окно управления закупками -->
+<div class="modal fade" id="purchasesModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Управление закупками</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="addPurchaseForm" class="mb-4">
+                    <div class="row">
+                        <div class="col-md-4">
+                            <div class="mb-3">
+                                <label class="form-label">Количество экземпляров</label>
+                                <input type="number" class="form-control" name="quantity" required min="1">
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="mb-3">
+                                <label class="form-label">Стоимость за экземпляр</label>
+                                <input type="number" class="form-control" name="price" required min="0">
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="mb-3">
+                                <label class="form-label">Поставщик</label>
+                                <input type="text" class="form-control" name="supplier" required>
+                            </div>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Добавить закупку</button>
+                </form>
+
+                <h6>История закупок</h6>
+                <div class="table-responsive">
+                    <table class="table table-sm" id="purchasesHistory">
+                        <thead>
+                            <tr>
+                                <th>Дата</th>
+                                <th>Количество</th>
+                                <th>Цена/шт</th>
+                                <th>Поставщик</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <!-- История закупок будет добавлена через JavaScript -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Инициализация тултипов
+document.addEventListener('DOMContentLoaded', function() {
+    var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'))
+    var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+        return new bootstrap.Tooltip(tooltipTriggerEl)
+    });
+
+    // Добавляем обработчик поиска
+    const searchInput = document.getElementById('searchInput');
+    let searchTimeout;
+    
+    searchInput.addEventListener('input', function() {
+        clearTimeout(searchTimeout);
+        searchTimeout = setTimeout(() => {
+            const searchQuery = this.value.trim();
+            window.location.href = `?page=1&search=${encodeURIComponent(searchQuery)}`;
+        }, 500);
+    });
+});
+
+function editBook(id, title, author, description, theme) {
+    const modal = new bootstrap.Modal(document.getElementById('bookModal'));
+    document.getElementById('modalTitle').textContent = 'Редактировать книгу';
+    document.getElementById('bookId').value = id;
+    document.getElementById('title').value = title;
+    document.getElementById('author').value = author;
+    document.getElementById('description').value = description || '';
+    document.getElementById('theme').value = theme || '';
+    modal.show();
+}
+
+function deleteBook(id) {
+    if (confirm('Вы уверены, что хотите удалить эту книгу?')) {
+        fetch(`/books/${id}/delete`, {
+            method: 'POST'
+        }).then(response => {
+            if (response.ok) {
+                location.reload();
+            }
+        });
+    }
+}
+
+function managePurchases(bookId) {
+    // Очищаем форму
+    document.getElementById('addPurchaseForm').reset();
+    
+    // Загружаем историю закупок
+    fetch(`/books/${bookId}/purchases`)
+        .then(response => response.json())
+        .then(data => {
+            const tbody = document.querySelector('#purchasesHistory tbody');
+            tbody.innerHTML = '';
+            
+            data.purchases.forEach(p => {
+                tbody.innerHTML += `
+                    <tr>
+                        <td>${p.date}</td>
+                        <td>${p.quantity}</td>
+                        <td>${p.price} ₽</td>
+                        <td>${p.supplier}</td>
+                    </tr>
+                `;
+            });
+            
+            // Настраиваем форму добавления закупки
+            const form = document.getElementById('addPurchaseForm');
+            form.onsubmit = (e) => {
+                e.preventDefault();
+                const formData = new FormData(form);
+                
+                fetch(`/books/${bookId}/purchases/add`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        quantity: parseInt(formData.get('quantity')),
+                        price: parseInt(formData.get('price')),
+                        supplier: formData.get('supplier')
+                    })
+                }).then(response => {
+                    if (response.ok) {
+                        location.reload();
+                    }
+                });
+            };
+            
+            // Показываем модальное окно
+            new bootstrap.Modal(document.getElementById('purchasesModal')).show();
+        });
+}
+
+// Добавим скрипт для работы с книгами
+document.getElementById('bookForm').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    
+    const formData = {
+        title: document.getElementById('title').value,
+        author: document.getElementById('author').value,
+        description: document.getElementById('description').value,
+        theme: document.getElementById('theme').value
+    };
+    
+    const bookId = document.getElementById('bookId').value;
+    const url = bookId ? `/api/books/${bookId}` : '/api/books';
+    const method = bookId ? 'PUT' : 'POST';
+    
+    try {
+        const response = await fetch(url, {
+            method: method,
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(formData)
+        });
+        
+        if (response.ok) {
+            window.location.reload();
+        } else {
+            const data = await response.json();
+            alert(data.error || 'Ошибка при сохранении книги');
+        }
+    } catch (error) {
+        console.error('Error:', error);
+        alert('Ошибка при сохранении книги');
+    }
+});
+</script>
+{% endblock %} 

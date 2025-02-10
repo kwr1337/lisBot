@@ -1,0 +1,398 @@
+{% extends "base.html" %}
+
+{% block title %}QR-коды книги - Админ-панель библиотеки{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4 no-print">
+        <h2>QR-коды для книги</h2>
+        <div>
+            <button onclick="printSelectedQR()" class="btn btn-success me-2">
+                📄 Распечатать выбранные
+            </button>
+            <button onclick="window.print()" class="btn btn-primary me-2">
+                🖨️ Распечатать все
+            </button>
+            <button onclick="writeOffSelected()" class="btn btn-warning me-2">
+                📝 Списать выбранные
+            </button>
+            <a href="/books" class="btn btn-secondary">
+                ⬅️ Назад
+            </a>
+        </div>
+    </div>
+    
+    <div class="card mb-4 no-print">
+        <div class="card-body">
+            <h5 class="card-title">{{ book.title }}</h5>
+            <p class="card-text">Автор: {{ book.author }}</p>
+        </div>
+    </div>
+
+    <!-- Заменим блок фильтров и поиска -->
+    <div class="card mb-4 no-print">
+        <div class="card-body">
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <div class="input-group">
+                        <span class="input-group-text bg-primary text-white">
+                            <i class="fas fa-search">🔍</i>
+                        </span>
+                        <input type="text" 
+                               class="form-control border-primary" 
+                               id="searchInput" 
+                               placeholder="Поиск по ID экземпляра..."
+                               aria-label="Поиск">
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="d-flex justify-content-end">
+                        <div class="btn-group" role="group">
+                            <input type="radio" class="btn-check" name="statusFilter" id="all" value="all" checked>
+                            <label class="btn btn-outline-primary" for="all">
+                                🔄 Все
+                            </label>
+
+                            <input type="radio" class="btn-check" name="statusFilter" id="available" value="available">
+                            <label class="btn btn-outline-success" for="available">
+                                ✅ Доступные
+                            </label>
+
+                            <input type="radio" class="btn-check" name="statusFilter" id="borrowed" value="borrowed">
+                            <label class="btn btn-outline-warning" for="borrowed">
+                                📚 Выданные
+                            </label>
+
+                            <input type="radio" class="btn-check" name="statusFilter" id="written_off" value="written_off">
+                            <label class="btn btn-outline-danger" for="written_off">
+                                ❌ Списанные
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-4" id="qrCodesContainer">
+        {% for copy in copies %}
+        <div class="col qr-code-item" data-id="{{ copy.id }}" data-status="{{ copy.status }}">
+            <div class="card h-100 print-clean">
+                <div class="card-body text-center">
+                    <div class="form-check no-print mb-2">
+                        <input class="form-check-input" type="checkbox" value="{{ copy.id }}" id="qr_{{ copy.id }}">
+                        <label class="form-check-label" for="qr_{{ copy.id }}">
+                            Выбрать для печати/списания
+                        </label>
+                    </div>
+                    <div class="qr-content">
+                        <div class="qr-code">
+                            <img src="/qr/{{ copy.id }}" alt="QR Code">
+                        </div>
+                        <p class="card-text small">
+                            {{ book.title }}<br>
+                            {{ book.author }}<br>
+                            ID: {{ copy.id }}
+                        </p>
+                        <div class="no-print">
+                            {% if copy.status == 'available' %}
+                                <span class="badge bg-success">Доступен</span>
+                            {% elif copy.status == 'borrowed' %}
+                                <span class="badge bg-warning">Выдан</span>
+                                {% if copy.borrowed_by %}
+                                    <br>Читатель: {{ copy.borrowed_by }}
+                                {% endif %}
+                            {% elif copy.status == 'written_off' %}
+                                <span class="badge bg-danger">Списан</span>
+                            {% elif copy.status == 'booked' %}
+                                <span class="badge bg-info">Забронирована</span>
+                            {% else %}
+                                <span class="badge bg-secondary">{{ copy.status }}</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+
+<!-- Модальное окно списания -->
+<div class="modal fade" id="writeOffModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">📝 Списать экземпляры</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form id="writeOffForm" method="POST">
+                <div class="modal-body">
+                    <p>Выбрано экземпляров: <span id="selectedCount">0</span></p>
+                    <div class="mb-3">
+                        <label class="form-label">Причина списания</label>
+                        <textarea class="form-control" name="reason" required rows="3"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                    <button type="submit" class="btn btn-warning">📝 Списать</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<style>
+    @media print {
+        .no-print {
+            display: none !important;
+        }
+        
+        .print-clean {
+            border: none !important;
+            box-shadow: none !important;
+            margin: 0 !important;
+        }
+        
+        .card-body {
+            padding: 0 !important;
+        }
+        
+        .qr-content {
+            padding: 5mm !important;
+            text-align: center !important;
+        }
+        
+        .qr-code-item {
+            page-break-inside: avoid !important;
+            float: left !important;
+            width: 70mm !important;
+            height: 90mm !important;
+            padding: 5mm !important;
+            margin: 0 !important;
+        }
+        
+        .qr-code-item.hidden-print {
+            display: none !important;
+        }
+        
+        .container {
+            width: 210mm !important;
+            max-width: none !important;
+            padding: 0 !important;
+            margin: 0 !important;
+        }
+        
+        .row {
+            margin: 0 !important;
+            display: block !important;
+        }
+        
+        img {
+            width: 50mm !important;
+            height: 50mm !important;
+            margin-bottom: 3mm !important;
+        }
+        
+        .card-text {
+            margin: 0 !important;
+            font-size: 10pt !important;
+            line-height: 1.2 !important;
+        }
+        
+        @page {
+            size: A4;
+            margin: 10mm;
+        }
+        
+        body {
+            padding: 0 !important;
+            margin: 0 !important;
+            width: 210mm !important;
+        }
+        
+        .badge {
+            display: none !important;
+        }
+    }
+    
+    .input-group-text {
+        border: 1px solid var(--bs-primary);
+    }
+    
+    .btn-group .btn {
+        padding: 0.375rem 1rem;
+        font-size: 0.9rem;
+    }
+    
+    .btn-group .btn:hover {
+        opacity: 0.85;
+    }
+    
+    .btn-check:checked + .btn-outline-primary {
+        background-color: var(--bs-primary);
+        border-color: var(--bs-primary);
+        color: white;
+    }
+    
+    .btn-check:checked + .btn-outline-success {
+        background-color: var(--bs-success);
+        border-color: var(--bs-success);
+        color: white;
+    }
+    
+    .btn-check:checked + .btn-outline-warning {
+        background-color: var(--bs-warning);
+        border-color: var(--bs-warning);
+        color: white;
+    }
+    
+    .btn-check:checked + .btn-outline-danger {
+        background-color: var(--bs-danger);
+        border-color: var(--bs-danger);
+        color: white;
+    }
+    
+    @media (max-width: 768px) {
+        .btn-group {
+            width: 100%;
+            margin-top: 1rem;
+        }
+        
+        .btn-group .btn {
+            flex: 1;
+            padding: 0.375rem 0.5rem;
+            font-size: 0.8rem;
+        }
+    }
+</style>
+
+<script>
+function printSelectedQR() {
+    const items = document.querySelectorAll('.qr-code-item');
+    items.forEach(item => {
+        const checkbox = item.querySelector('.form-check-input');
+        if (!checkbox.checked) {
+            item.classList.add('hidden-print');
+        } else {
+            item.classList.remove('hidden-print');
+        }
+    });
+    
+    window.print();
+    
+    items.forEach(item => {
+        item.classList.remove('hidden-print');
+    });
+}
+
+function writeOffSelected() {
+    const checkboxes = document.querySelectorAll('.form-check-input:checked');
+    if (checkboxes.length === 0) {
+        alert('Выберите экземпляры для списания');
+        return;
+    }
+    
+    document.getElementById('selectedCount').textContent = checkboxes.length;
+    const modal = new bootstrap.Modal(document.getElementById('writeOffModal'));
+    modal.show();
+}
+
+document.getElementById('writeOffForm').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    
+    const checkboxes = document.querySelectorAll('.form-check-input:checked');
+    const copyIds = Array.from(checkboxes).map(cb => cb.value);
+    
+    for (const copyId of copyIds) {
+        try {
+            const response = await fetch(`/books/copies/${copyId}/write-off`, {
+                method: 'POST'
+            });
+            
+            if (!response.ok) {
+                throw new Error(`Failed to write off copy ${copyId}`);
+            }
+        } catch (error) {
+            console.error('Error:', error);
+            alert('Ошибка при списании книг');
+            return;
+        }
+    }
+    
+    window.location.reload();
+});
+
+document.addEventListener('DOMContentLoaded', function() {
+    const container = document.querySelector('.d-flex.justify-content-between');
+    const selectAllBtn = document.createElement('button');
+    selectAllBtn.className = 'btn btn-info me-2 no-print';
+    selectAllBtn.innerHTML = '✅ Выбрать все';
+    selectAllBtn.onclick = function() {
+        const checkboxes = document.querySelectorAll('.form-check-input');
+        const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+        checkboxes.forEach(cb => cb.checked = !allChecked);
+        this.innerHTML = allChecked ? '✅ Выбрать все' : '❌ Снять выбор';
+    };
+    container.children[1].insertBefore(selectAllBtn, container.children[1].firstChild);
+
+    // Используем debounce для поиска
+    const debouncedSearch = debounce(applyFilters, 300);
+    document.getElementById('searchInput').addEventListener('input', debouncedSearch);
+    
+    document.querySelectorAll('input[name="statusFilter"]').forEach(radio => {
+        radio.addEventListener('change', applyFilters);
+    });
+});
+
+function applyFilters() {
+    const searchValue = document.getElementById('searchInput').value.toLowerCase().trim();
+    const selectedStatus = document.querySelector('input[name="statusFilter"]:checked').value;
+    let visibleCount = 0;
+    
+    document.querySelectorAll('.qr-code-item').forEach(item => {
+        const id = item.dataset.id;
+        const status = item.dataset.status;
+        
+        const matchesSearch = searchValue === '' || id.includes(searchValue);
+        const matchesStatus = selectedStatus === 'all' || status === selectedStatus;
+        
+        if (matchesSearch && matchesStatus) {
+            item.style.display = '';
+            visibleCount++;
+        } else {
+            item.style.display = 'none';
+        }
+    });
+    
+    // Показываем сообщение, если ничего не найдено
+    const container = document.getElementById('qrCodesContainer');
+    const noResultsMsg = container.querySelector('.no-results-message');
+    
+    if (visibleCount === 0) {
+        if (!noResultsMsg) {
+            const message = document.createElement('div');
+            message.className = 'col-12 text-center py-5 no-results-message';
+            message.innerHTML = '<h4 class="text-muted">Ничего не найдено</h4>';
+            container.appendChild(message);
+        }
+    } else if (noResultsMsg) {
+        noResultsMsg.remove();
+    }
+}
+
+// Добавляем debounce для оптимизации поиска
+function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+        const later = () => {
+            clearTimeout(timeout);
+            func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+    };
+}
+</script>
+{% endblock %} 

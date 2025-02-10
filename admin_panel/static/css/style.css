@@ -1,0 +1,34 @@
+.card {
+    box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+    margin-bottom: 1rem;
+}
+
+.card-title {
+    color: #6c757d;
+    font-size: 1rem;
+    font-weight: 500;
+    margin-bottom: 0.5rem;
+}
+
+.card-text {
+    color: #212529;
+    font-size: 2rem;
+    font-weight: 600;
+}
+
+.table {
+    margin-bottom: 0;
+}
+
+#searchInput {
+    min-width: 300px;
+}
+
+.table td {
+    vertical-align: middle;
+}
+
+.btn-sm {
+    padding: 0.25rem 0.5rem;
+    margin: 0 0.25rem;
+} 

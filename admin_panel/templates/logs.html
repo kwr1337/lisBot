@@ -1,0 +1,272 @@
+{% extends "base.html" %}
+
+{% block content %}
+<!-- Добавляем стили для datepicker в head -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/themes/material_blue.css">
+
+<div class="container mt-4">
+    <h2>Журнал действий</h2>
+    
+    <!-- Фильтры -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <form id="filterForm" method="GET" class="row g-3">
+                <div class="col-md-3">
+                    <label class="form-label">Админ</label>
+                    <select class="form-select" name="admin_id">
+                        <option value="">Все админы</option>
+                        {% for admin in admins %}
+                            <option value="{{ admin.id }}" {% if filters.admin_id == admin.id|string %}selected{% endif %}>
+                                {{ admin.name }}
+                            </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Тип действия</label>
+                    <select class="form-select" name="action_type">
+                        <option value="">Все действия</option>
+                        <option value="add_book" {% if filters.action_type == 'add_book' %}selected{% endif %}>
+                            Добавление книги
+                        </option>
+                        <option value="edit_book" {% if filters.action_type == 'edit_book' %}selected{% endif %}>
+                            Редактирование книги
+                        </option>
+                        <option value="delete_book" {% if filters.action_type == 'delete_book' %}selected{% endif %}>
+                            Удаление книги
+                        </option>
+                        <option value="add_purchase" {% if filters.action_type == 'add_purchase' %}selected{% endif %}>
+                            Добавление закупки
+                        </option>
+                        <option value="write_off_copy" {% if filters.action_type == 'write_off_copy' %}selected{% endif %}>
+                            Списание экземпляра
+                        </option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Дата от</label>
+                    <div class="input-group">
+                        <span class="input-group-text">📅</span>
+                        <input type="text" 
+                               class="form-control datepicker" 
+                               name="date_from" 
+                               placeholder="дд.мм.гггг"
+                               value="{{ filters.date_from }}"
+                               autocomplete="off">
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Дата до</label>
+                    <div class="input-group">
+                        <span class="input-group-text">📅</span>
+                        <input type="text" 
+                               class="form-control datepicker" 
+                               name="date_to" 
+                               placeholder="дд.мм.гггг"
+                               value="{{ filters.date_to }}"
+                               autocomplete="off">
+                    </div>
+                </div>
+                <div class="col-12 text-end">
+                    <button type="submit" class="btn btn-primary">
+                        🔍 Применить фильтры
+                    </button>
+                    <a href="/logs" class="btn btn-secondary">
+                        ♻️ Сбросить
+                    </a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Таблица -->
+    <div class="table-responsive">
+        <table class="table table-striped">
+            <thead>
+                <tr>
+                    <th>Время</th>
+                    <th>Админ</th>
+                    <th>Действие</th>
+                    <th>Детали</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for log in logs %}
+                <tr>
+                    <td>{{ log.timestamp }}</td>
+                    <td>{{ log.admin_name }}</td>
+                    <td>
+                        {% if log.action_type == 'add_book' %}
+                            Добавление книги
+                        {% elif log.action_type == 'edit_book' %}
+                            Редактирование книги
+                        {% elif log.action_type == 'delete_book' %}
+                            Удаление книги
+                        {% elif log.action_type == 'add_purchase' %}
+                            Добавлена закупка
+                        {% elif log.action_type == 'write_off_copy' %}
+                            Списание экземпляра
+                        {% else %}
+                            {{ log.action_type }}
+                        {% endif %}
+                    </td>
+                    <td>{{ log.details }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Пагинация -->
+    {% if total_pages > 1 %}
+    <nav aria-label="Page navigation" class="mt-4">
+        <ul class="pagination justify-content-center">
+            <li class="page-item {% if current_page == 1 %}disabled{% endif %}">
+                <a class="page-link" href="?page=1{{ '&' + filter_query if filter_query }}" aria-label="First">
+                    <span aria-hidden="true">«</span>
+                </a>
+            </li>
+            
+            {% set start = (current_page - 2) if (current_page - 2) > 0 else 1 %}
+            {% set end = (current_page + 2) if (current_page + 2) <= total_pages else total_pages %}
+            
+            {% if start > 1 %}
+                <li class="page-item">
+                    <span class="page-link">...</span>
+                </li>
+            {% endif %}
+            
+            {% for page in range(start, end + 1) %}
+            <li class="page-item {% if page == current_page %}active{% endif %}">
+                <a class="page-link" href="?page={{ page }}{{ '&' + filter_query if filter_query }}">{{ page }}</a>
+            </li>
+            {% endfor %}
+            
+            {% if end < total_pages %}
+                <li class="page-item">
+                    <span class="page-link">...</span>
+                </li>
+            {% endif %}
+            
+            <li class="page-item {% if current_page == total_pages %}disabled{% endif %}">
+                <a class="page-link" href="?page={{ total_pages }}{{ '&' + filter_query if filter_query }}" aria-label="Last">
+                    <span aria-hidden="true">»</span>
+                </a>
+            </li>
+        </ul>
+    </nav>
+    {% endif %}
+</div>
+
+<!-- Добавляем скрипты в конец body -->
+<script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+<script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/ru.js"></script>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Инициализация datepicker для всех полей с классом datepicker
+    flatpickr(".datepicker", {
+        locale: "ru",
+        dateFormat: "d.m.Y",
+        maxDate: "today",
+        disableMobile: true,
+        allowInput: true,
+        monthSelectorType: "static",
+        yearSelectorType: "static"
+    });
+});
+</script>
+
+<style>
+/* Стили для datepicker */
+.flatpickr-calendar {
+    background: #fff;
+    box-shadow: 0 0 10px rgba(0,0,0,0.1);
+    border-radius: 8px;
+}
+
+.flatpickr-day.selected {
+    background: var(--bs-primary);
+    border-color: var(--bs-primary);
+}
+
+.flatpickr-day.today {
+    border-color: var(--bs-primary);
+}
+
+.flatpickr-day:hover {
+    background: var(--bs-primary);
+    border-color: var(--bs-primary);
+    color: white;
+}
+
+.input-group .input-group-text {
+    background-color: #fff;
+    border-right: none;
+}
+
+.input-group .form-control {
+    border-left: none;
+}
+
+.input-group .form-control:focus {
+    border-color: #dee2e6;
+    box-shadow: none;
+}
+
+/* Стили для пагинации */
+.pagination {
+    margin-bottom: 2rem;
+}
+
+.pagination .page-link {
+    color: var(--bs-primary);
+    border: 1px solid #dee2e6;
+    margin: 0 2px;
+    padding: 0.5rem 0.75rem;
+    min-width: 38px;
+    text-align: center;
+}
+
+.pagination .page-link:hover {
+    background-color: var(--bs-primary);
+    color: white;
+    border-color: var(--bs-primary);
+}
+
+.pagination .page-item.active .page-link {
+    background-color: var(--bs-primary);
+    border-color: var(--bs-primary);
+    color: white;
+}
+
+.pagination .page-item.disabled .page-link {
+    color: #6c757d;
+    pointer-events: none;
+    background-color: #fff;
+    border-color: #dee2e6;
+}
+
+/* Добавим тень при наведении */
+.pagination .page-link:hover {
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+}
+
+/* Скруглим углы у крайних элементов */
+.pagination .page-item:first-child .page-link {
+    border-top-left-radius: 6px;
+    border-bottom-left-radius: 6px;
+}
+
+.pagination .page-item:last-child .page-link {
+    border-top-right-radius: 6px;
+    border-bottom-right-radius: 6px;
+}
+
+/* Анимация при наведении */
+.pagination .page-link {
+    transition: all 0.2s ease-in-out;
+}
+</style>
+{% endblock %} 

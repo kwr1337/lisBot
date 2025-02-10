@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-4">
+    <h2>Информация о книге</h2>
+    
+    {% if book %}
+    <div class="card">
+        <div class="card-body">
+            <h3 class="card-title">{{ book[1] }}</h3>
+            <p class="card-text"><strong>Автор:</strong> {{ book[2] }}</p>
+            <p class="card-text"><strong>Описание:</strong> {{ book[3] }}</p>
+            <p class="card-text">
+                <strong>Экземпляры:</strong> {{ book[6] }} всего, {{ book[5] }} доступно
+            </p>
+            
+            <h4 class="mt-4">Экземпляры книги:</h4>
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>№</th>
+                        <th>Статус</th>
+                        <th>Информация</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for copy in copies %}
+                    <tr>
+                        <td>{{ copy[1] }}</td>
+                        <td>
+                            {% if copy[2] == 'available' %}
+                            <span class="badge bg-success">Доступна</span>
+                            {% elif copy[2] == 'borrowed' %}
+                            <span class="badge bg-warning">Выдана</span>
+                            {% else %}
+                            <span class="badge bg-secondary">{{ copy[2] }}</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if copy[2] == 'borrowed' %}
+                            Выдана: {{ copy[3] }}<br>
+                            Дата выдачи: {{ copy[4] }}<br>
+                            Вернуть до: {{ copy[5] }}
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% else %}
+    <div class="alert alert-warning">
+        Книга не найдена
+    </div>
+    {% endif %}
+</div>
+{% endblock %} 

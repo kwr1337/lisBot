@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-4">
+    <h2>Предложения пользователей</h2>
+    
+    <!-- Добавляем фильтры -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <form class="row g-3">
+                <div class="col-md-3">
+                    <label class="form-label">Статус</label>
+                    <select name="status" class="form-select">
+                        <option value="all">Все</option>
+                        <option value="pending" {% if status == 'pending' %}selected{% endif %}>На рассмотрении</option>
+                        <option value="approved" {% if status == 'approved' %}selected{% endif %}>Одобренные</option>
+                        <option value="rejected" {% if status == 'rejected' %}selected{% endif %}>Отклоненные</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Дата от</label>
+                    <input type="date" name="date_from" class="form-control" value="{{ date_from }}">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Дата до</label>
+                    <input type="date" name="date_to" class="form-control" value="{{ date_to }}">
+                </div>
+                <div class="col-md-3 d-flex align-items-end">
+                    <button type="submit" class="btn btn-primary">Применить</button>
+                    <a href="/suggestions" class="btn btn-secondary ms-2">Сбросить</a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="table-responsive">
+        <table class="table table-striped">
+            <thead>
+                <tr>
+                    <th>Дата</th>
+                    <th>Пользователь</th>
+                    <th>Название книги</th>
+                    <th>Ссылка</th>
+                    <th>Цена</th>
+                    <th>Причина</th>
+                    <th>Статус</th>
+                    <th>Действия</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for suggestion in suggestions %}
+                <tr>
+                    <td>{{ suggestion.created_at }}</td>
+                    <td>{{ suggestion.user_name }}</td>
+                    <td>{{ suggestion.title }}</td>
+                    <td><a href="{{ suggestion.url }}" target="_blank">Ссылка</a></td>
+                    <td>{{ suggestion.price }} ₽</td>
+                    <td>{{ suggestion.reason }}</td>
+                    <td>
+                        {% if suggestion.status == 'pending' %}
+                            <span class="badge bg-warning">На рассмотрении</span>
+                        {% elif suggestion.status == 'approved' %}
+                            <span class="badge bg-success">Одобрено</span>
+                        {% elif suggestion.status == 'rejected' %}
+                            <span class="badge bg-danger">Отклонено</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if suggestion.status == 'pending' %}
+                        <button class="btn btn-sm btn-success" onclick="updateStatus({{ suggestion.id }}, 'approved')">
+                            Одобрить
+                        </button>
+                        <button class="btn btn-sm btn-danger" onclick="updateStatus({{ suggestion.id }}, 'rejected')">
+                            Отклонить
+                        </button>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+function updateStatus(id, status) {
+    fetch(`/suggestions/${id}/status`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ status: status })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            location.reload();
+        } else {
+            alert('Ошибка при обновлении статуса');
+        }
+    });
+}
+</script>
+{% endblock %} 

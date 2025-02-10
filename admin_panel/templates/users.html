@@ -1,0 +1,171 @@
+{% extends "base.html" %}
+
+{% block title %}Пользователи - Админ-панель библиотеки{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <h2>Управление пользователями</h2>
+    
+    <!-- Фильтры -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <form id="filterForm" method="GET" class="row g-3">
+                <div class="col-md-4">
+                    <div class="input-group">
+                        <span class="input-group-text">🔍</span>
+                        <input type="text" 
+                               class="form-control" 
+                               name="search" 
+                               placeholder="Поиск по имени, ID или телефону..."
+                               value="{{ filters.search }}">
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <select class="form-select" name="role">
+                        <option value="">Все роли</option>
+                        <option value="user" {% if filters.role == 'user' %}selected{% endif %}>Пользователи</option>
+                        <option value="admin" {% if filters.role == 'admin' %}selected{% endif %}>Администраторы</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <select class="form-select" name="status">
+                        <option value="">Все статусы</option>
+                        <option value="active" {% if filters.status == 'active' %}selected{% endif %}>Активные</option>
+                        <option value="blocked" {% if filters.status == 'blocked' %}selected{% endif %}>Заблокированные</option>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <button type="submit" class="btn btn-primary w-100">
+                        🔍 Найти
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Статистика -->
+    <div class="row mb-4">
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Всего пользователей</h5>
+                    <p class="card-text display-4">{{ stats[0] }}</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Администраторов</h5>
+                    <p class="card-text display-4">{{ stats[1] }}</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Обычных пользователей</h5>
+                    <p class="card-text display-4">{{ stats[2] }}</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Таблица пользователей -->
+    <div class="table-responsive">
+        <table class="table table-striped">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Имя пользователя</th>
+                    <th>ФИО</th>
+                    <th>Телефон</th>
+                    <th>Роль</th>
+                    <th>Статус</th>
+                    <th>Взято книг</th>
+                    <th>Отзывов</th>
+                    <th>Последняя активность</th>
+                    <th>Действия</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for user in users %}
+                <tr>
+                    <td>{{ user[0] }}</td>
+                    <td>{{ user[1] }}</td>
+                    <td>{{ user[2] or '-' }}</td>
+                    <td>{{ user[3] or '-' }}</td>
+                    <td>
+                        {% if user[4] == 'admin' %}
+                            <span class="badge bg-primary">Администратор</span>
+                        {% else %}
+                            <span class="badge bg-secondary">Пользователь</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if user[8] == 1 %}
+                            <span class="badge bg-danger">Заблокирован</span>
+                        {% else %}
+                            <span class="badge bg-success">Активен</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ user[5] }}</td>
+                    <td>{{ user[6] }}</td>
+                    <td>{{ user[7] or 'Нет активности' }}</td>
+                    <td>
+                        {% if user[4] != 'admin' %}
+                        <button type="button" 
+                                class="btn btn-sm {% if user[8] == 1 %}btn-success{% else %}btn-danger{% endif %}"
+                                data-bs-toggle="modal" 
+                                data-bs-target="#blockModal{{ user[0] }}">
+                            {% if user[8] == 1 %}
+                                Разблокировать
+                            {% else %}
+                                Заблокировать
+                            {% endif %}
+                        </button>
+                        
+                        <!-- Модальное окно для подтверждения -->
+                        <div class="modal fade" id="blockModal{{ user[0] }}" tabindex="-1">
+                            <div class="modal-dialog">
+                                <div class="modal-content">
+                                    <div class="modal-header">
+                                        <h5 class="modal-title">
+                                            {% if user[8] == 1 %}
+                                                Разблокировать пользователя
+                                            {% else %}
+                                                Заблокировать пользователя
+                                            {% endif %}
+                                        </h5>
+                                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                                    </div>
+                                    <form action="/users/{{ user[0] }}/toggle_block" method="post">
+                                        <div class="modal-body">
+                                            <div class="mb-3">
+                                                <label class="form-label">Причина:</label>
+                                                <textarea name="reason" class="form-control" required></textarea>
+                                            </div>
+                                        </div>
+                                        <div class="modal-footer">
+                                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                                            <button type="submit" class="btn {% if user[8] == 1 %}btn-success{% else %}btn-danger{% endif %}">
+                                                {% if user[8] == 1 %}
+                                                    Разблокировать
+                                                {% else %}
+                                                    Заблокировать
+                                                {% endif %}
+                                            </button>
+                                        </div>
+                                    </form>
+                                </div>
+                            </div>
+                        </div>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %} 

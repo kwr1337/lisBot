@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+
+{% block title %}Главная - Админ-панель библиотеки{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <h2>Панель управления</h2>
+    
+    <!-- Статистика -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Книг в библиотеке</h5>
+                    <p class="card-text display-4">{{ total_books }}</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Пользователей</h5>
+                    <p class="card-text display-4">{{ total_users }}</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Отзывов на модерации</h5>
+                    <p class="card-text display-4">{{ pending_reviews }}</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Книг на руках</h5>
+                    <p class="card-text display-4">{{ books_borrowed }}</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Последние действия -->
+    <div class="card">
+        <div class="card-header">
+            <h5 class="mb-0">Последние действия</h5>
+        </div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Дата</th>
+                            <th>Книга</th>
+                            <th>Пользователь</th>
+                            <th>Действие</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for activity in recent_activities %}
+                        <tr>
+                            <td>{{ activity[2] }}</td>
+                            <td>{{ activity[0] }}</td>
+                            <td>{{ activity[1] }}</td>
+                            <td>
+                                {% if activity[3] == 'borrowed' %}
+                                    <span class="badge bg-primary">Взята</span>
+                                {% elif activity[3] == 'returned' %}
+                                    <span class="badge bg-success">Возвращена</span>
+                                {% else %}
+                                    <span class="badge bg-secondary">{{ activity[3] }}</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %} 

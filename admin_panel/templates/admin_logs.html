@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+
+{% block title %}Журнал действий - Админ-панель библиотеки{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <h2>Журнал действий администраторов</h2>
+    
+    <div class="card mb-4">
+        <div class="card-body">
+            <form method="get" class="row g-3">
+                <div class="col-md-3">
+                    <label class="form-label">Администратор</label>
+                    <select name="admin_id" class="form-select">
+                        <option value="">Все администраторы</option>
+                        {% for admin in admins %}
+                        <option value="{{ admin[0] }}" {% if selected_admin == admin[0] %}selected{% endif %}>
+                            {{ admin[2] or admin[1] }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                
+                <div class="col-md-3">
+                    <label class="form-label">Тип действия</label>
+                    <select name="action_type" class="form-select">
+                        <option value>Все действия</option>
+                        {% for action in action_types %}
+                        <option value="{{ action[0] }}" {% if selected_action == action[0] %}selected{% endif %}>
+                            {% if action[0] == 'write_off' %}
+                                Списание
+                            {% elif action[0] == 'add_book' %}
+                                Добавление книги
+                            {% elif action[0] == 'purchase' %}
+                                Закупка
+                            {% elif action[0] == 'delete_book' %}
+                                Удаление книги
+                            {% elif action[0] == 'edit_book' %}
+                                Редактирование
+                            {% else %}
+                                {{ action[0] }}
+                            {% endif %}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                
+                <div class="col-md-2">
+                    <label class="form-label">Дата от</label>
+                    <input type="date" name="date_from" class="form-control" value="{{ date_from }}">
+                </div>
+                
+                <div class="col-md-2">
+                    <label class="form-label">Дата до</label>
+                    <input type="date" name="date_to" class="form-control" value="{{ date_to }}">
+                </div>
+                
+                <div class="col-md-2 d-flex align-items-end">
+                    <button type="submit" class="btn btn-primary">Применить</button>
+                    <a href="/admin/logs" class="btn btn-secondary ms-2">Сбросить</a>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <div class="table-responsive">
+        <table class="table table-striped">
+            <thead>
+                <tr>
+                    <th>Дата и время</th>
+                    <th>Администратор</th>
+                    <th>Действие</th>
+                    <th>Книга</th>
+                    <th>Пользователь</th>
+                    <th>Детали</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for log in logs %}
+                <tr>
+                    <td>{{ log.timestamp }}</td>
+                    <td>{{ log.admin }}</td>
+                    <td>{{ log.action }}</td>
+                    <td>{{ log.book }}</td>
+                    <td>{{ log.user }}</td>
+                    <td>{{ log.details }}</td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="6" class="text-center">Записей в журнале пока нет</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %} 

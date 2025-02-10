@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+
+{% block title %}Закупки - Админ-панель библиотеки{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>Управление закупками</h2>
+        <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addPurchaseModal">
+            <i class="fas fa-plus"></i> Добавить закупку
+        </button>
+    </div>
+    
+    <!-- Статистика -->
+    <div class="row mb-4">
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Всего закупок</h5>
+                    <p class="card-text display-4">{{ stats[0] or 0 }}</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Закуплено книг</h5>
+                    <p class="card-text display-4">{{ stats[1] or 0 }}</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Потрачено средств</h5>
+                    <p class="card-text display-4">{{ "%.2f"|format(stats[2] or 0) }} ₽</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Таблица закупок -->
+    <div class="table-responsive">
+        <table class="table table-striped">
+            <thead>
+                <tr>
+                    <th>Дата</th>
+                    <th>Книга</th>
+                    <th>Количество</th>
+                    <th>Цена за шт.</th>
+                    <th>Сумма</th>
+                    <th>Поставщик</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for purchase in purchases %}
+                <tr>
+                    <td>{{ purchase[6] }}</td>
+                    <td>{{ purchase[1] }} ({{ purchase[2] }})</td>
+                    <td>{{ purchase[3] }}</td>
+                    <td>{{ "%.2f"|format(purchase[4]) }} ₽</td>
+                    <td>{{ "%.2f"|format(purchase[3] * purchase[4]) }} ₽</td>
+                    <td>{{ purchase[5] }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Модальное окно добавления закупки -->
+<div class="modal fade" id="addPurchaseModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Добавить закупку</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form action="/purchases/add" method="post">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Книга</label>
+                        <select name="book_id" class="form-select" required>
+                            <option value="">Выберите книгу</option>
+                            {% for book in books %}
+                            <option value="{{ book[0] }}">{{ book[1] }} ({{ book[2] }})</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Количество</label>
+                        <input type="number" name="quantity" class="form-control" min="1" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Цена за штуку</label>
+                        <input type="number" name="price_per_unit" class="form-control" min="0" step="0.01" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Поставщик</label>
+                        <input type="text" name="supplier" class="form-control" required>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                    <button type="submit" class="btn btn-primary">Добавить</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %} 
