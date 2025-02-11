@@ -87,12 +87,20 @@ async def cmd_start(message: types.Message, state: FSMContext):
             else:
                 await message.answer(
                     "👋 С возвращением!\n"
-                    "Используйте команду /help чтобы узнать о доступных командах."
+                    "Используйте команду /menu чтобы узнать о доступных командах.",
+                    reply_markup=get_main_keyboard()
                 )
                 
     except Exception as e:
         logging.error(f"Error in cmd_start: {e}")
         await message.answer("Произошла ошибка при регистрации. Попробуйте позже.")
+
+@router.message(Command("menu"))
+async def cmd_menu(message: types.Message):
+    await message.answer(
+        "Выберите действие:",
+        reply_markup=get_main_keyboard()
+    )
 
 @router.message(RegistrationStates.waiting_for_phone)
 async def process_phone(message: types.Message, state: FSMContext):
@@ -134,7 +142,8 @@ async def process_fullname(message: types.Message, state: FSMContext):
         await state.clear()
         await message.answer(
             "✅ Регистрация успешно завершена!\n"
-            "Используйте команду /help чтобы узнать о доступных командах."
+            "Используйте команду /menu чтобы узнать о доступных командах.",
+            reply_markup=get_main_keyboard()
         )
         
     except Exception as e:
@@ -285,9 +294,9 @@ async def show_book_info(callback: types.CallbackQuery):
                 f"⭐️ Рейтинг: {avg_rating:.1f}/5 ({review_count} отзывов)\n"
             )
             
-            if available_copies > 0 and user_books_count < MAX_BOOKS_PER_USER:
-                text += "\n❗️ У вас есть эта книга"
-            elif user_books_count >= MAX_BOOKS_PER_USER:
+            # if available_copies > 0 and user_books_count < MAX_BOOKS_PER_USER:
+            #     text += "\n❗️ У вас есть эта книга"
+            if user_books_count >= MAX_BOOKS_PER_USER:
                 text += f"\n❗️ Достигнут лимит книг ({MAX_BOOKS_PER_USER})"
             
             kb = InlineKeyboardBuilder()
@@ -769,7 +778,7 @@ async def search_type_selected(callback: types.CallbackQuery, state: FSMContext)
 
 @router.message(UserStates.waiting_for_search)
 async def process_search(message: types.Message, page: int = 1, search_query: str = None):
-    menu_commands = ['📚 Каталог', '🔍 Поиск', '📖 Мои книги', '❓ Помощь']
+    menu_commands = ['📚 Каталог', '🔍 Поиск', '📖 Мои книги', '❓ Помощь','📝 Отзывы','📖 Предложить книгу']
     
     if message.text in menu_commands:
         await state.clear()
