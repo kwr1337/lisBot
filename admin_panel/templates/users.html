@@ -3,6 +3,11 @@
 {% block title %}Пользователи - Админ-панель библиотеки{% endblock %}
 
 {% block content %}
+{% if debug_roles %}
+<div class="alert alert-info">
+    Роли в базе: {{ debug_roles }}
+</div>
+{% endif %}
 <div class="container mt-4">
     <h2>Управление пользователями</h2>
     
@@ -23,7 +28,8 @@
                 <div class="col-md-3">
                     <select class="form-select" name="role">
                         <option value="">Все роли</option>
-                        <option value="user" {% if filters.role == 'user' %}selected{% endif %}>Пользователи</option>
+                        <option value="user" {% if filters.role == 'user' %}selected{% endif %}>Ученики</option>
+                        <option value="teacher" {% if filters.role == 'teacher' %}selected{% endif %}>Учителя</option>
                         <option value="admin" {% if filters.role == 'admin' %}selected{% endif %}>Администраторы</option>
                     </select>
                 </div>
@@ -45,7 +51,7 @@
 
     <!-- Статистика -->
     <div class="row mb-4">
-        <div class="col-md-4">
+        <div class="col-md-3">
             <div class="card">
                 <div class="card-body">
                     <h5 class="card-title">Всего пользователей</h5>
@@ -53,7 +59,7 @@
                 </div>
             </div>
         </div>
-        <div class="col-md-4">
+        <div class="col-md-3">
             <div class="card">
                 <div class="card-body">
                     <h5 class="card-title">Администраторов</h5>
@@ -61,11 +67,19 @@
                 </div>
             </div>
         </div>
-        <div class="col-md-4">
+        <div class="col-md-3">
             <div class="card">
                 <div class="card-body">
-                    <h5 class="card-title">Обычных пользователей</h5>
+                    <h5 class="card-title">Учителей</h5>
                     <p class="card-text display-4">{{ stats[2] }}</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title">Учеников</h5>
+                    <p class="card-text display-4">{{ stats[3] }}</p>
                 </div>
             </div>
         </div>
@@ -98,8 +112,10 @@
                     <td>
                         {% if user[4] == 'admin' %}
                             <span class="badge bg-primary">Администратор</span>
+                        {% elif user[4] == 'teacher' %}
+                            <span class="badge bg-info">Учитель</span>
                         {% else %}
-                            <span class="badge bg-secondary">Пользователь</span>
+                            <span class="badge bg-secondary">Ученик</span>
                         {% endif %}
                     </td>
                     <td>

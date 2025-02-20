@@ -14,6 +14,8 @@ import re
 import logging
 from aiogram.exceptions import TelegramBadRequest
 import io
+import qrcode
+from io import BytesIO
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -56,7 +58,10 @@ def get_main_keyboard():
         ],
         [
             types.KeyboardButton(text="📖 Предложить книгу"),
-            types.KeyboardButton(text="❓ Инструкция")
+            types.KeyboardButton(text="📚 Учебники")
+        ],
+        [
+            types.KeyboardButton(text="👤 Мой профиль")
         ]
     ]
     
@@ -67,8 +72,27 @@ def get_main_keyboard():
         is_persistent=True
     )
 
+async def check_blocked_user(message: types.Message) -> bool:
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT is_blocked FROM users WHERE id = ?", (message.from_user.id,))
+            result = cursor.fetchone()
+            
+            if result and result[0] == 1:
+                await message.answer("🚫 Вы заблокированы и не можете использовать бота.")
+                return True
+            return False
+            
+    except Exception as e:
+        logging.error(f"Error checking blocked status: {e}")
+        await message.answer("Произошла ошибка при проверке статуса блокировки")
+        return True
+
 @router.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
+    if await check_blocked_user(message):
+        return
     try:
         with get_db() as conn:
             cursor = conn.cursor()
@@ -97,6 +121,8 @@ async def cmd_start(message: types.Message, state: FSMContext):
 
 @router.message(Command("menu"))
 async def cmd_menu(message: types.Message):
+    if await check_blocked_user(message):
+        return
     await message.answer(
         "Выберите действие:",
         reply_markup=get_main_keyboard()
@@ -172,6 +198,8 @@ async def check_registration(message: types.Message) -> bool:
 
 @router.message(F.text == "📚 Каталог")
 async def catalog_command(message: types.Message):
+    if await check_blocked_user(message):
+        return
     await show_catalog(message)
 
 @router.callback_query(lambda c: c.data.startswith("catalog:"))
@@ -242,35 +270,48 @@ async def show_book_info(callback: types.CallbackQuery):
         with get_db() as conn:
             cursor = conn.cursor()
             
-            # Проверяем количество доступных (не списанных) копий
+            # Получаем количество книг у пользователя
             cursor.execute("""
                 SELECT COUNT(*) 
-                FROM book_copies bc
-                LEFT JOIN borrowed_books bb ON bc.id = bb.copy_id AND bb.status IN ('booked', 'borrowed')
-                WHERE bc.book_id = ? AND bc.status != 'written_off' AND bb.id IS NULL
-            """, (book_id,))
+                FROM (
+                    SELECT user_id 
+                    FROM book_reservations 
+                    WHERE user_id = ? AND status = 'pending'
+                    UNION ALL
+                    SELECT user_id 
+                    FROM borrowed_books 
+                    WHERE user_id = ? AND status = 'borrowed'
+                )
+            """, (callback.from_user.id, callback.from_user.id))
             
-            available_copies = cursor.fetchone()[0]
-            
-            cursor.execute("""
-                SELECT COUNT(*) 
-                FROM borrowed_books 
-                WHERE user_id = ? AND status IN ('booked', 'borrowed')
-            """, (callback.from_user.id,))
             user_books_count = cursor.fetchone()[0]
             
+            # Обновляем запрос для корректного подсчета доступных копий
             cursor.execute("""
                 SELECT 
                     b.title,
                     b.author,
                     b.description,
                     COUNT(DISTINCT bc.id) as total_copies,
-                    COUNT(DISTINCT CASE WHEN bb.status IN ('booked', 'borrowed') THEN bc.id END) as busy_copies,
+                    (
+                        SELECT COUNT(*)
+                        FROM book_copies bc2
+                        WHERE bc2.book_id = b.id
+                        AND bc2.status = 'available'
+                        AND NOT EXISTS (
+                            SELECT 1 
+                            FROM borrowed_books bb 
+                            WHERE bb.copy_id = bc2.id AND bb.status = 'borrowed'
+                        )
+                    ) - (
+                        SELECT COUNT(*)
+                        FROM book_reservations br 
+                        WHERE br.book_id = b.id AND br.status = 'pending'
+                    ) as available_copies,
                     COALESCE(AVG(r.rating), 0) as avg_rating,
                     COUNT(DISTINCT r.id) as review_count
                 FROM books b
                 LEFT JOIN book_copies bc ON b.id = bc.book_id
-                LEFT JOIN borrowed_books bb ON bc.id = bb.copy_id AND bb.status IN ('booked', 'borrowed')
                 LEFT JOIN book_reviews r ON b.id = r.book_id
                 WHERE b.id = ?
                 GROUP BY b.id
@@ -281,8 +322,7 @@ async def show_book_info(callback: types.CallbackQuery):
                 await callback.answer("Книга не найдена", show_alert=True)
                 return
                 
-            title, author, description, total_copies, busy_copies, avg_rating, review_count = book
-            available_copies = total_copies - busy_copies
+            title, author, description, total_copies, available_copies, avg_rating, review_count = book
             
             text = (
                 f"📖 <b>{title}</b>\n"
@@ -410,46 +450,80 @@ async def process_borrow(callback: types.CallbackQuery):
         with get_db() as conn:
             cursor = conn.cursor()
             
-            # Проверяем наличие доступных (не списанных) копий книги
+            # Проверяем, нет ли у пользователя этой книги на руках или в бронировании
+            cursor.execute("""
+                SELECT 
+                    CASE 
+                        WHEN EXISTS (
+                            SELECT 1 
+                            FROM borrowed_books 
+                            WHERE user_id = ? AND book_id = ? AND status = 'borrowed'
+                        ) THEN 'borrowed'
+                        WHEN EXISTS (
+                            SELECT 1 
+                            FROM book_reservations 
+                            WHERE user_id = ? AND book_id = ? AND status = 'pending'
+                        ) THEN 'reserved'
+                        ELSE NULL 
+                    END as book_status
+            """, (callback.from_user.id, book_id, callback.from_user.id, book_id))
+            
+            result = cursor.fetchone()
+            if result and result[0]:
+                if result[0] == 'borrowed':
+                    await callback.answer("❌ Эта книга уже у вас на руках!", show_alert=True)
+                else:
+                    await callback.answer("❌ Вы уже забронировали эту книгу!", show_alert=True)
+                return
+            
+            # Проверяем лимит книг у пользователя
+            cursor.execute("""
+                SELECT COUNT(*) 
+                FROM (
+                    SELECT user_id 
+                    FROM book_reservations 
+                    WHERE user_id = ? AND status = 'pending'
+                    UNION ALL
+                    SELECT user_id 
+                    FROM borrowed_books 
+                    WHERE user_id = ? AND status = 'borrowed'
+                )
+            """, (callback.from_user.id, callback.from_user.id))
+            
+            if cursor.fetchone()[0] >= MAX_BOOKS_PER_USER:
+                await callback.answer("❌ Достигнут лимит книг", show_alert=True)
+                return
+            
+            # Проверяем наличие свободных экземпляров
             cursor.execute("""
                 SELECT COUNT(*) 
                 FROM book_copies bc
-                LEFT JOIN borrowed_books bb ON bc.id = bb.copy_id 
-                    AND bb.status IN ('borrowed', 'booked')
                 WHERE bc.book_id = ? 
-                    AND bc.status != 'written_off'
-                    AND bb.id IS NULL
+                AND bc.status = 'available'
+                AND NOT EXISTS (
+                    SELECT 1 FROM borrowed_books bb 
+                    WHERE bb.copy_id = bc.id AND bb.status = 'borrowed'
+                )
             """, (book_id,))
             
-            available_copies = cursor.fetchone()[0]
-            
-            if available_copies == 0:
-                await callback.answer("❌ К сожалению, сейчас нет доступных экземпляров", show_alert=True)
+            if cursor.fetchone()[0] == 0:
+                await callback.answer("❌ Нет доступных экземпляров", show_alert=True)
                 return
             
-            # Получаем первую доступную копию
+            # Создаем бронирование на 3 дня
             cursor.execute("""
-                SELECT bc.id
-                FROM book_copies bc
-                LEFT JOIN borrowed_books bb ON bc.id = bb.copy_id 
-                    AND bb.status IN ('borrowed', 'booked')
-                WHERE bc.book_id = ? 
-                    AND bc.status != 'written_off'
-                    AND bb.id IS NULL
-                LIMIT 1
-            """, (book_id,))
-            
-            copy_id = cursor.fetchone()[0]
-            
-            # Создаем бронь
-            cursor.execute("""
-                INSERT INTO borrowed_books (user_id, copy_id, book_id, status, borrow_date)
-                VALUES (?, ?, ?, 'booked', datetime('now'))
-            """, (callback.from_user.id, copy_id, book_id))
+                INSERT INTO book_reservations (
+                    user_id, 
+                    book_id, 
+                    status, 
+                    created_at,
+                    expires_at
+                ) VALUES (?, ?, 'pending', datetime('now'), datetime('now', '+3 days'))
+            """, (callback.from_user.id, book_id))
             
             conn.commit()
             
-            await callback.answer("✅ Книга успешно забронирована!", show_alert=True)
+            await callback.answer("✅ Книга забронирована на 3 дня!", show_alert=True)
             
     except Exception as e:
         logging.error(f"Error in process_borrow: {e}")
@@ -562,53 +636,66 @@ async def cancel_extend(callback: types.CallbackQuery):
 @router.callback_query(F.data.startswith("cancel_booking:"))
 async def cancel_booking(callback: types.CallbackQuery):
     try:
-        borrow_id = callback.data.split(":")[1]
+        booking_id = int(callback.data.split(":")[1])
         
         with get_db() as conn:
             cursor = conn.cursor()
             
-            # Проверяем бронь
+            # Проверяем существование брони и её статус
             cursor.execute("""
-                SELECT b.title, bc.id
-                FROM borrowed_books bb
-                JOIN book_copies bc ON bb.copy_id = bc.id
-                JOIN books b ON bc.book_id = b.id
-                WHERE bb.id = ? AND bb.status = 'booked'
-            """, (borrow_id,))
+                SELECT 
+                    r.status,
+                    b.title,
+                    b.author
+                FROM book_reservations r
+                JOIN books b ON r.book_id = b.id
+                WHERE r.id = ? AND r.user_id = ?
+            """, (booking_id, callback.from_user.id))
             
-            result = cursor.fetchone()
-            if not result:
-                await callback.answer("Бронь не найдена или уже отменена", show_alert=True)
+            reservation = cursor.fetchone()
+            
+            if not reservation:
+                await callback.answer("❌ Бронирование не найдено", show_alert=True)
                 return
                 
-            title, copy_id = result
+            status, title, author = reservation
             
-            # Отменяем бронь
+            if status != 'pending':
+                await callback.answer(
+                    "❌ Невозможно отменить бронирование\n"
+                    f"Текущий статус: {status}",
+                    show_alert=True
+                )
+                return
+            
+            # Отменяем бронирование
             cursor.execute("""
-                UPDATE borrowed_books 
+                UPDATE book_reservations 
                 SET status = 'cancelled' 
-                WHERE id = ? AND status = 'booked'
-            """, (borrow_id,))
-            
-            cursor.execute("""
-                UPDATE book_copies 
-                SET status = 'available' 
-                WHERE id = ?
-            """, (copy_id,))
+                WHERE id = ? AND user_id = ?
+            """, (booking_id, callback.from_user.id))
             
             conn.commit()
             
-            await callback.answer(f"✅ Бронь книги '{title}' отменена", show_alert=True)
+            await callback.answer(
+                f"✅ Бронирование книги «{title}» отменено",
+                show_alert=True
+            )
             
-            # Обновляем список книг
+            # Обновляем список книг пользователя
             await show_my_books(callback.message)
             
     except Exception as e:
         logging.error(f"Error in cancel_booking: {e}")
-        await callback.answer("Произошла ошибка при отмене брони", show_alert=True)
+        await callback.answer(
+            "❌ Произошла ошибка при отмене бронирования",
+            show_alert=True
+        )
 
 @router.message(F.text == "📚 Мои книги")
 async def show_my_books(message: types.Message):
+    if await check_blocked_user(message):
+        return
     try:
         with get_db() as conn:
             cursor = conn.cursor()
@@ -617,17 +704,37 @@ async def show_my_books(message: types.Message):
                 SELECT 
                     b.title,
                     b.author,
-                    bb.status,
-                    COALESCE(datetime(bb.return_date), '2000-01-01 00:00:00') as return_date,
-                    COALESCE(datetime(bb.borrow_date), '2000-01-01 00:00:00') as borrow_date,
-                    bc.id as copy_id,
-                    bb.id as borrow_id
-                FROM borrowed_books bb
-                JOIN book_copies bc ON bb.copy_id = bc.id
-                JOIN books b ON bc.book_id = b.id
-                WHERE bb.user_id = ? AND bb.status IN ('borrowed', 'booked')
-                ORDER BY bb.return_date
-            """, (message.from_user.id,))
+                    CASE 
+                        WHEN records.source = 'borrowed' THEN 'borrowed'
+                        ELSE 'booked'
+                    END as status,
+                    COALESCE(records.return_date, records.created_at) as return_date,
+                    COALESCE(records.borrow_date, records.created_at) as borrow_date,
+                    COALESCE(records.copy_id, 0) as copy_id,
+                    records.id as record_id,
+                    records.expires_at as expires_at
+                FROM (
+                    SELECT 
+                        id, user_id, book_id, status, created_at, 
+                        NULL as copy_id, NULL as return_date, NULL as borrow_date,
+                        expires_at,
+                        'reservation' as source
+                    FROM book_reservations 
+                    WHERE user_id = ? AND status = 'pending'
+                    UNION ALL
+                    SELECT 
+                        id, user_id, book_id, status, borrow_date as created_at,
+                        copy_id, return_date, borrow_date,
+                        NULL as expires_at,
+                        'borrowed' as source
+                    FROM borrowed_books 
+                    WHERE user_id = ? AND status = 'borrowed'
+                    AND (is_mass_issue = 0 OR is_mass_issue IS NULL)
+                    AND (is_textbook = 0 OR is_textbook IS NULL)
+                ) as records
+                JOIN books b ON records.book_id = b.id
+                ORDER BY COALESCE(records.borrow_date, records.created_at) DESC
+            """, (message.from_user.id, message.from_user.id))
             
             books = cursor.fetchall()
             
@@ -641,13 +748,16 @@ async def show_my_books(message: types.Message):
             borrowed = []
             booked = []
             
+            current_time = datetime.now()
+            
             for book in books:
-                title, author, status, return_date, borrow_date, copy_id, borrow_id = book
-                # Форматируем даты для отображения
-                formatted_return = datetime.strptime(return_date, "%Y-%m-%d %H:%M:%S").strftime("%d.%m.%Y")
-                formatted_borrow = datetime.strptime(borrow_date, "%Y-%m-%d %H:%M:%S").strftime("%d.%m.%Y")
+                title, author, status, return_date, borrow_date, copy_id, record_id, expires_at = book
                 
                 if status == 'borrowed':
+                    # Форматируем даты для отображения
+                    formatted_return = datetime.strptime(return_date, "%Y-%m-%d %H:%M:%S").strftime("%d.%m.%Y")
+                    formatted_borrow = datetime.strptime(borrow_date, "%Y-%m-%d %H:%M:%S").strftime("%d.%m.%Y")
+                    
                     book_info = (
                         f"📖 {title}\n"
                         f"✍️ {author}\n"
@@ -658,19 +768,32 @@ async def show_my_books(message: types.Message):
                     borrowed.append(book_info)
                     kb.button(
                         text=f"🕒 Продлить: {title}",
-                        callback_data=f"extend:{borrow_id}"
+                        callback_data=f"extend:{record_id}"
                     )
                 else:
+                    # Для забронированных книг показываем оставшееся время
+                    expires = datetime.strptime(expires_at, "%Y-%m-%d %H:%M:%S")
+                    days_left = (expires - current_time).days
+                    hours_left = ((expires - current_time).seconds // 3600)
+                    
+                    time_left_text = ""
+                    if days_left > 0:
+                        time_left_text = f"(осталось {days_left} дн.)"
+                    elif hours_left > 0:
+                        time_left_text = f"(осталось {hours_left} ч.)"
+                    else:
+                        time_left_text = "(бронь истекает)"
+                    
                     book_info = (
                         f"📖 {title}\n"
                         f"✍️ {author}\n"
-                        f"🔢 ID экземпляра: {copy_id}\n"
-                        f"📅 Дата брони: {formatted_borrow}\n"
+                        f"📅 Забронирована: {datetime.strptime(borrow_date, '%Y-%m-%d %H:%M:%S').strftime('%d.%m.%Y')}\n"
+                        f"⏳ {time_left_text}\n"
                     )
                     booked.append(book_info)
                     kb.button(
                         text=f"❌ Отменить бронь: {title}",
-                        callback_data=f"cancel_booking:{borrow_id}"
+                        callback_data=f"cancel_booking:{record_id}"
                     )
             
             if borrowed:
@@ -751,6 +874,8 @@ async def extend_book(callback: types.CallbackQuery):
 # Поиск книг
 @router.message(F.text == "🔍 Поиск")
 async def search_start(message: types.Message):
+    if await check_blocked_user(message):
+        return
     kb = InlineKeyboardBuilder()
     kb.button(text="🔍 По названию", callback_data="search_by_title")
     kb.button(text="✍️ По автору", callback_data="search_by_author")
@@ -778,7 +903,7 @@ async def search_type_selected(callback: types.CallbackQuery, state: FSMContext)
 
 @router.message(UserStates.waiting_for_search)
 async def process_search(message: types.Message, page: int = 1, search_query: str = None):
-    menu_commands = ['📚 Каталог', '🔍 Поиск', '📖 Мои книги', '❓ Помощь','📝 Отзывы','📖 Предложить книгу']
+    menu_commands = ['📚 Каталог', '🔍 Поиск', '📖 Мои книги', '❓ Помощь','📝 Отзывы','📖 Предложить книгу','👤 Мой профиль','📚 Учебники']
     
     if message.text in menu_commands:
         await state.clear()
@@ -859,6 +984,8 @@ async def process_search_navigation(callback: types.CallbackQuery):
 
 @router.message(F.text == "📝 Отзывы")
 async def reviews_menu(message: types.Message):
+    if await check_blocked_user(message):
+        return
     try:
         kb = InlineKeyboardBuilder()
         # kb.button(text="📖 Читать отзывы", callback_data="show_all_reviews")
@@ -1108,6 +1235,8 @@ async def show_books_for_reviews(callback: types.CallbackQuery):
 
 @router.message(F.text == "❓ Инструкция")
 async def show_instructions(message: types.Message):
+    if await check_blocked_user(message):
+        return
     instructions = """
 📚 <b>Инструкция по использованию библиотечного бота:</b>
 
@@ -1284,6 +1413,8 @@ async def process_book_request(message: types.Message, state: FSMContext):
 
 @router.message(F.text == "📖 Предложить книгу")
 async def suggest_book_start(message: types.Message, state: FSMContext):
+    if await check_blocked_user(message):
+        return
     logging.debug(f"Suggest book handler triggered with message: {message.text}")
     
     if not await check_registration(message):
@@ -1307,6 +1438,12 @@ async def suggest_book_start(message: types.Message, state: FSMContext):
 
 @router.message(SuggestBookStates.waiting_for_title)
 async def process_book_title(message: types.Message, state: FSMContext):
+    menu_commands = ['📚 Каталог', '🔍 Поиск', '📖 Мои книги', '❓ Помощь','📝 Отзывы','📖 Предложить книгу','👤 Мой профиль','📚 Учебники']
+    
+    if message.text in menu_commands:
+        await state.clear()
+        return
+    
     await state.update_data(title=message.text)
     await message.answer(
         "Отправьте ссылку, где можно купить эту книгу:\n"
@@ -1316,6 +1453,12 @@ async def process_book_title(message: types.Message, state: FSMContext):
 
 @router.message(SuggestBookStates.waiting_for_url)
 async def process_book_url(message: types.Message, state: FSMContext):
+    menu_commands = ['📚 Каталог', '🔍 Поиск', '📖 Мои книги', '❓ Помощь','📝 Отзывы','📖 Предложить книгу','👤 Мой профиль','📚 Учебники']
+    
+    if message.text in menu_commands:
+        await state.clear()
+        return
+    
     if not message.text.startswith(('http://', 'https://')):
         await message.answer(
             "❌ Пожалуйста, отправьте корректную ссылку, начинающуюся с http:// или https://"
@@ -1331,6 +1474,12 @@ async def process_book_url(message: types.Message, state: FSMContext):
 
 @router.message(SuggestBookStates.waiting_for_price)
 async def process_book_price(message: types.Message, state: FSMContext):
+    menu_commands = ['📚 Каталог', '🔍 Поиск', '📖 Мои книги', '❓ Помощь','📝 Отзывы','📖 Предложить книгу','👤 Мой профиль','📚 Учебники']
+    
+    if message.text in menu_commands:
+        await state.clear()
+        return
+    
     try:
         price = int(message.text)
         if price <= 0:
@@ -1348,6 +1497,12 @@ async def process_book_price(message: types.Message, state: FSMContext):
 
 @router.message(SuggestBookStates.waiting_for_reason)
 async def process_book_reason(message: types.Message, state: FSMContext):
+    menu_commands = ['📚 Каталог', '🔍 Поиск', '📖 Мои книги', '❓ Помощь','📝 Отзывы','📖 Предложить книгу','👤 Мой профиль','📚 Учебники']
+    
+    if message.text in menu_commands:
+        await state.clear()
+        return
+    
     data = await state.get_data()
     
     with get_db() as conn:
@@ -1380,3 +1535,139 @@ async def process_book_reason(message: types.Message, state: FSMContext):
         finally:
             conn.close()
             await state.clear() 
+
+@router.message(F.text == "👤 Мой профиль")
+async def show_profile(message: types.Message):
+    if await check_blocked_user(message):
+        return
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            
+            # Получаем информацию о пользователе и его учителе
+            cursor.execute("""
+                SELECT 
+                    u.full_name, 
+                    u.phone, 
+                    u.class,
+                    t.full_name as teacher_name
+                FROM users u
+                LEFT JOIN users t ON u.class = t.class AND t.role = 'teacher'
+                WHERE u.id = ?
+            """, (message.from_user.id,))
+            
+            user = cursor.fetchone()
+            if not user:
+                await message.answer("❌ Ошибка: профиль не найден")
+                return
+                
+            full_name, phone, class_name, teacher_name = user
+            
+            # Получаем количество книг на руках
+            cursor.execute("""
+                SELECT COUNT(*) 
+                FROM borrowed_books 
+                WHERE user_id = ? AND status = 'borrowed'
+            """, (message.from_user.id,))
+            
+            books_count = cursor.fetchone()[0]
+            
+            # Генерируем QR-код с ID пользователя
+            qr = qrcode.QRCode(
+                version=1,
+                error_correction=qrcode.constants.ERROR_CORRECT_L,
+                box_size=10,
+                border=4,
+            )
+            qr.add_data(str(message.from_user.id))
+            qr.make(fit=True)
+            
+            # Создаем изображение QR-кода
+            qr_image = qr.make_image(fill_color="black", back_color="white")
+            
+            # Сохраняем изображение в буфер
+            bio = BytesIO()
+            qr_image.save(bio, 'PNG')
+            bio.seek(0)
+            
+            # Формируем текст профиля
+            profile_text = (
+                f"👤 Профиль читателя\n\n"
+                f"ФИО: {full_name}\n"
+                f"Класс: {class_name or 'Не указан'}\n"
+            )
+            
+            # Добавляем информацию об учителе, если есть
+            if teacher_name:
+                profile_text += f"Учитель: {teacher_name}\n"
+                
+            profile_text += (
+                f"Телефон: {phone}\n"
+                f"Книг на руках: {books_count}\n\n"
+                f"🔍 ID читателя: {message.from_user.id}\n"
+                f"Покажите QR-код библиотекарю для быстрой выдачи книг"
+            )
+            
+            # Отправляем информацию о профиле
+            await message.answer(profile_text)
+            
+            # Отправляем QR-код
+            await message.answer_photo(
+                types.BufferedInputFile(
+                    bio.getvalue(),
+                    filename="reader_card.png"
+                ),
+                caption="🎫 Ваш читательский билет"
+            )
+            
+    except Exception as e:
+        logging.error(f"Error in show_profile: {e}")
+        await message.answer("❌ Произошла ошибка при получении профиля")
+
+@router.message(F.text == "📚 Учебники")
+async def show_textbooks(message: types.Message):
+    if await check_blocked_user(message):
+        return
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            
+            # Изменяем запрос для корректного определения учебников
+            cursor.execute("""
+                SELECT 
+                    b.title,
+                    b.author,
+                    bb.borrow_date,
+                    bb.return_date
+                FROM borrowed_books bb
+                JOIN books b ON bb.book_id = b.id
+                WHERE bb.user_id = ? 
+                AND bb.status = 'borrowed'
+                AND (bb.is_textbook = 1 OR bb.is_mass_issue = 1)  -- Добавляем проверку на массовую выдачу
+                ORDER BY bb.borrow_date DESC
+            """, (message.from_user.id,))
+            
+            books = cursor.fetchall()
+            
+            if not books:
+                await message.answer("У вас нет учебников на руках")
+                return
+                
+            text = "📚 Ваши учебники:\n\n"
+            
+            for title, author, borrow_date, return_date in books:
+                borrow = datetime.strptime(borrow_date, "%Y-%m-%d %H:%M:%S").strftime("%d.%m.%Y")
+                return_date = datetime.strptime(return_date, "%Y-%m-%d %H:%M:%S").strftime("%d.%m.%Y")
+                
+                text += (
+                    f"📖 {title}\n"
+                    f"✍️ {author}\n"
+                    f"📅 Взят: {borrow}\n"
+                    f"📅 Вернуть до: {return_date}\n\n"
+                )
+            
+            await message.answer(text)
+            
+    except Exception as e:
+        logging.error(f"Error in show_textbooks: {e}")
+        await message.answer("❌ Произошла ошибка при получении списка учебников") 

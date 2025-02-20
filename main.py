@@ -4,6 +4,7 @@ from fastapi.staticfiles import StaticFiles
 from routes import router
 from database.models import init_admin_logs_table
 import logging
+from admin_panel.routes import router as admin_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -14,6 +15,7 @@ app = FastAPI()
 app.add_middleware(SessionMiddleware, secret_key="your-secret-key")
 app.mount("/static", StaticFiles(directory="admin_panel/static"), name="static")
 app.include_router(router)
+app.include_router(admin_router, prefix="/admin")
 
 @app.on_event("startup")
 async def startup_event():

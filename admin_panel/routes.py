@@ -1,12 +1,16 @@
-from fastapi import APIRouter, Request, Form, HTTPException, Query
-from fastapi.responses import RedirectResponse, JSONResponse
+from fastapi import APIRouter, Request, Form, HTTPException, Query, File, UploadFile
+from fastapi.responses import RedirectResponse, JSONResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from database.models import get_db, log_admin_action
 from starlette.middleware.sessions import SessionMiddleware
 import logging
+from openpyxl import Workbook, load_workbook
+from openpyxl.styles import Font, PatternFill
+from openpyxl.comments import Comment
+from io import BytesIO
 
 router = APIRouter()
-templates = Jinja2Templates(directory="admin_panel/templates")
+templates = Jinja2Templates(directory="./admin_panel/templates")
 
 def is_admin(request: Request) -> bool:
     return request.session.get('is_admin', False)
@@ -241,3 +245,290 @@ async def book_qrcodes(request: Request, book_id: int):
         )
     finally:
         conn.close() 
+
+@router.get("/users")
+async def users_page(request: Request):
+    if not is_admin(request):
+        return RedirectResponse(url="/login")
+        
+    admin_info = get_admin_info(request)
+    
+    with get_db() as conn:
+        cursor = conn.cursor()
+        
+        # Отладочный запрос - проверяем все роли и количество пользователей с каждой ролью
+        cursor.execute("""
+            SELECT role, COUNT(*) as count 
+            FROM users 
+            GROUP BY role
+        """)
+        role_debug = cursor.fetchall()
+        print("Роли в базе:", role_debug)  # Для отладки в консоли
+        
+        # Получаем статистику по ролям
+        cursor.execute("""
+            SELECT 
+                (SELECT COUNT(*) FROM users) as total,
+                (SELECT COUNT(*) FROM users WHERE role = 'admin') as admins,
+                (SELECT COUNT(*) FROM users WHERE role = 'teacher') as teachers,
+                (SELECT COUNT(*) FROM users WHERE role = 'user' OR role IS NULL OR role = '') as students
+        """)
+        stats = cursor.fetchone()
+        
+        # Получаем список пользователей
+        cursor.execute("""
+            SELECT 
+                u.id,
+                u.username,
+                u.full_name,
+                u.phone,
+                u.role,
+                (SELECT COUNT(*) FROM borrowed_books WHERE user_id = u.id AND status = 'borrowed') as books_count,
+                (SELECT COUNT(*) FROM book_reviews WHERE user_id = u.id) as reviews_count,
+                COALESCE(MAX(bb.borrow_date), 'Нет активности') as last_activity,
+                0 as is_blocked
+            FROM users u
+            LEFT JOIN borrowed_books bb ON u.id = bb.user_id
+            GROUP BY u.id
+            ORDER BY 
+                CASE u.role
+                    WHEN 'admin' THEN 1
+                    WHEN 'teacher' THEN 2
+                    ELSE 3
+                END,
+                u.full_name
+        """)
+        users = cursor.fetchall()
+        
+        return templates.TemplateResponse(
+            "users.html",
+            {
+                "request": request,
+                "users": users,
+                "admin_info": admin_info,
+                "stats": stats
+            }
+        ) 
+
+@router.post("/users/{user_id}/toggle_block")
+async def toggle_user_block(request: Request, user_id: int, reason: str = Form(...)):
+    if not is_admin(request):
+        return RedirectResponse(url="/login")
+    
+    with get_db() as conn:
+        cursor = conn.cursor()
+        
+        # Получаем текущий статус блокировки
+        cursor.execute("SELECT is_blocked FROM users WHERE id = ?", (user_id,))
+        user = cursor.fetchone()
+        
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        is_blocked = user[0]
+        new_status = 0 if is_blocked else 1
+        
+        # Обновляем статус блокировки
+        cursor.execute("UPDATE users SET is_blocked = ? WHERE id = ?", (new_status, user_id))
+        conn.commit()
+        
+        # Отправляем уведомление пользователю
+        try:
+            bot = request.app.state.bot  # Получаем экземпляр бота из состояния приложения
+            if new_status == 1:
+                await bot.send_message(user_id, f"🚫 Вы были заблокированы. Причина: {reason}")
+            else:
+                await bot.send_message(user_id, f"✅ Вы были разблокированы. Причина: {reason}")
+        except Exception as e:
+            logging.error(f"Error sending block/unblock notification to user {user_id}: {e}")
+        
+        return RedirectResponse(url="/users", status_code=303) 
+
+@router.get("/books/template/download")
+async def download_template(request: Request):
+    if not is_admin(request):
+        return RedirectResponse(url="/login")
+    
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Книги"
+    
+    # Заголовки с пометкой обязательных полей
+    headers = [
+        "Название книги*", 
+        "Автор*", 
+        "Тематика*", 
+        "Описание", 
+        "Количество экземпляров*", 
+        "Цена за экземпляр*", 
+        "Поставщик*"
+    ]
+    
+    # Добавляем заголовки
+    for col, header in enumerate(headers, 1):
+        ws.cell(row=1, column=col, value=header)
+    
+    # Примеры данных для разных типов книг
+    examples = [
+        [
+            "Война и мир (Том 1)", 
+            "Л.Н. Толстой", 
+            "Художественная литература",
+            "Роман-эпопея о событиях 1812 года",
+            "5",
+            "1000",
+            "Книжный дом"
+        ],
+        [
+            "Алгебра 7 класс", 
+            "Макарычев Ю.Н.", 
+            "Учебная литература",
+            "Учебник для общеобразовательных учреждений",
+            "30",
+            "800",
+            "Просвещение"
+        ],
+        [
+            "Гарри Поттер и философский камень", 
+            "Дж. К. Роулинг", 
+            "Художественная литература",
+            "Первая книга о приключениях юного волшебника",
+            "10",
+            "700",
+            "Росмэн"
+        ],
+        [
+            "Python для начинающих", 
+            "Марк Лутц", 
+            "Научная литература",
+            "Введение в программирование на Python",
+            "15",
+            "1500",
+            "O'Reilly"
+        ],
+        [
+            "Большая энциклопедия школьника", 
+            "Коллектив авторов", 
+            "Справочная литература",
+            "Универсальный справочник для учащихся",
+            "8",
+            "2000",
+            "АСТ"
+        ]
+    ]
+    
+    # Добавляем примеры
+    for row, example in enumerate(examples, 2):
+        for col, value in enumerate(example, 1):
+            ws.cell(row=row, column=col, value=value)
+    
+    # Настраиваем ширину столбцов
+    column_widths = {
+        "A": 40,  # Название
+        "B": 30,  # Автор
+        "C": 25,  # Тематика
+        "D": 50,  # Описание
+        "E": 15,  # Количество
+        "F": 15,  # Цена
+        "G": 25   # Поставщик
+    }
+    
+    for col, width in column_widths.items():
+        ws.column_dimensions[col].width = width
+    
+    # Создаем лист с инструкциями
+    ws_help = wb.create_sheet(title="Инструкция")
+    instructions = [
+        ["Инструкция по заполнению шаблона:"],
+        [""],
+        ["1. Поля, отмеченные звездочкой (*), обязательны для заполнения"],
+        ["2. Тематика должна быть одной из:"],
+        ["   - Художественная литература"],
+        ["   - Учебная литература"],
+        ["   - Научная литература"],
+        ["   - Справочная литература"],
+        ["3. Количество экземпляров - целое положительное число"],
+        ["4. Цена за экземпляр - положительное число в рублях"],
+        ["5. В первом листе приведены примеры заполнения"],
+        ["6. Не изменяйте структуру файла и заголовки столбцов"],
+        ["7. Дата закупки будет установлена автоматически"],
+        [""],
+        ["Примечания:"],
+        ["- Описание может быть пустым"],
+        ["- Количество и цена должны быть указаны цифрами"],
+        ["- Проверяйте правильность указания тематики"]
+    ]
+    
+    for row, instruction in enumerate(instructions, 1):
+        ws_help.cell(row=row, column=1, value=instruction[0])
+    
+    ws_help.column_dimensions["A"].width = 70
+    
+    buffer = BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    
+    return StreamingResponse(
+        buffer,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=books_template.xlsx"}
+    )
+
+@router.post("/books/upload")
+async def upload_books(request: Request, file: UploadFile = File(...)):
+    if not is_admin(request):
+        return RedirectResponse(url="/login")
+    
+    try:
+        contents = await file.read()
+        wb = load_workbook(BytesIO(contents))
+        ws = wb.active
+        
+        with get_db() as conn:
+            cursor = conn.cursor()
+            
+            # Пропускаем заголовок
+            for row in ws.iter_rows(min_row=2):
+                if not row[0].value:  # Пропускаем пустые строки
+                    continue
+                    
+                title = row[0].value
+                author = row[1].value
+                theme = row[2].value
+                description = row[3].value
+                quantity = int(row[4].value or 0)
+                price = float(row[5].value or 0)
+                supplier = row[6].value
+                
+                # Добавляем книгу
+                cursor.execute("""
+                    INSERT INTO books (title, author, theme, description)
+                    VALUES (?, ?, ?, ?)
+                    RETURNING id
+                """, (title, author, theme, description))
+                book_id = cursor.fetchone()[0]
+                
+                # Добавляем закупку
+                if quantity > 0 and price > 0:
+                    cursor.execute("""
+                        INSERT INTO book_purchases (
+                            book_id, quantity, price_per_unit, 
+                            supplier, purchase_date
+                        )
+                        VALUES (?, ?, ?, ?, datetime('now'))
+                    """, (book_id, quantity, price, supplier))
+                    
+                    # Создаем копии книг
+                    for _ in range(quantity):
+                        cursor.execute("""
+                            INSERT INTO book_copies (book_id, status)
+                            VALUES (?, 'available')
+                        """, (book_id,))
+                
+            conn.commit()
+            
+        return RedirectResponse(url="/books", status_code=303)
+        
+    except Exception as e:
+        logging.error(f"Error uploading books: {e}")
+        raise HTTPException(status_code=400, detail="Ошибка при загрузке файла") 

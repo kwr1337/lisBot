@@ -58,9 +58,19 @@
                     </div>
                 </div>
                 <div class="col-md-4 text-end">
-                    <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#bookModal">
-                        ➕ Добавить книгу
-                    </button>
+                    <div class="btn-group">
+                        <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#bookModal">
+                            ➕ Добавить книгу
+                        </button>
+                        <button type="button" class="btn btn-primary dropdown-toggle dropdown-toggle-split" data-bs-toggle="dropdown">
+                            <span class="visually-hidden">Toggle Dropdown</span>
+                        </button>
+                        <ul class="dropdown-menu">
+                            <li><a class="dropdown-item" href="/admin/books/template/download">📥 Скачать шаблон Excel</a></li>
+                            <li><a class="dropdown-item" href="#" onclick="document.getElementById('excelUpload').click()">📤 Загрузить из Excel</a></li>
+                        </ul>
+                    </div>
+                    <input type="file" id="excelUpload" style="display: none" accept=".xlsx" onchange="uploadExcel(this)">
                 </div>
             </div>
         </div>
@@ -104,7 +114,7 @@
                         </button>
                         <button class="btn btn-sm btn-danger" onclick="deleteBook({{ book.id }})" data-bs-toggle="tooltip" title="Удалить">🗑️</button>
                         <button class="btn btn-sm btn-warning" onclick="managePurchases({{ book.id }})" data-bs-toggle="tooltip" title="Управление закупками">📦</button>
-                        <a href="/books/{{ book.id }}/qrcodes" class="btn btn-sm btn-info" data-bs-toggle="tooltip" title="QR коды">🔍</a>
+                        <a href="/admin/books/{{ book.id }}/qrcodes" class="btn btn-sm btn-info" data-bs-toggle="tooltip" title="QR коды">🔍</a>
                     </td>
                 </tr>
                 {% endfor %}
@@ -376,5 +386,26 @@ document.getElementById('bookForm').addEventListener('submit', async function(e)
         alert('Ошибка при сохранении книги');
     }
 });
+
+function uploadExcel(input) {
+    if (!input.files || !input.files[0]) return;
+    
+    const formData = new FormData();
+    formData.append('file', input.files[0]);
+    
+    fetch('/admin/books/upload', {
+        method: 'POST',
+        body: formData
+    }).then(response => {
+        if (response.ok) {
+            location.reload();
+        } else {
+            alert('Ошибка при загрузке файла');
+        }
+    }).catch(error => {
+        console.error('Error:', error);
+        alert('Ошибка при загрузке файла');
+    });
+}
 </script>
 {% endblock %} 

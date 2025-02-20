@@ -170,6 +170,48 @@ def log_admin_action(admin_id: int, action_type: str, book_id: int = None, detai
         logging.error(f"Error logging admin action: {e}")
         raise e
 
+def migrate_borrowed_books():
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            
+            # Проверяем наличие колонки is_textbook
+            cursor.execute("PRAGMA table_info(borrowed_books)")
+            columns = [column[1] for column in cursor.fetchall()]
+            
+            if 'is_textbook' not in columns:
+                cursor.execute("""
+                    ALTER TABLE borrowed_books
+                    ADD COLUMN is_textbook INTEGER DEFAULT 0
+                """)
+                conn.commit()
+                
+    except Exception as e:
+        logging.error(f"Error migrating borrowed_books table: {e}")
+        raise e
+
+def migrate_users():
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            
+            # Проверяем, существует ли колонка class
+            cursor.execute("PRAGMA table_info(users)")
+            columns = [column[1] for column in cursor.fetchall()]
+            
+            # Добавляем колонку, если её нет
+            if 'class' not in columns:
+                cursor.execute("""
+                    ALTER TABLE users
+                    ADD COLUMN class TEXT
+                """)
+                conn.commit()
+                logging.info("Added 'class' column to users table")
+            
+    except Exception as e:
+        logging.error(f"Error migrating users table: {e}")
+        raise e
+
 def init_db():
     try:
         with get_db() as conn:
@@ -219,18 +261,34 @@ def init_db():
             """)
             
             cursor.execute("""
+                CREATE TABLE IF NOT EXISTS book_reservations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    book_id INTEGER,
+                    status TEXT DEFAULT 'pending',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    expires_at TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users (id),
+                    FOREIGN KEY (book_id) REFERENCES books (id)
+                )
+            """)
+            
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS borrowed_books (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     user_id INTEGER,
-                    copy_id INTEGER,
                     book_id INTEGER,
-                    status TEXT,
+                    copy_id INTEGER,
+                    reservation_id INTEGER,
                     borrow_date TIMESTAMP,
                     return_date TIMESTAMP,
-                    extended INTEGER DEFAULT 0,
+                    status TEXT DEFAULT 'borrowed',
+                    is_textbook INTEGER DEFAULT 0,
+                    is_mass_issue INTEGER DEFAULT 0,
                     FOREIGN KEY (user_id) REFERENCES users (id),
+                    FOREIGN KEY (book_id) REFERENCES books (id),
                     FOREIGN KEY (copy_id) REFERENCES book_copies (id),
-                    FOREIGN KEY (book_id) REFERENCES books (id)
+                    FOREIGN KEY (reservation_id) REFERENCES book_reservations (id)
                 )
             """)
             
@@ -286,6 +344,32 @@ def init_db():
                     FOREIGN KEY (book_id) REFERENCES books (id)
                 )
             """)
+            
+            # Добавляем вызов миграции
+            migrate_borrowed_books()
+            migrate_users()
+            
+            # Проверяем наличие колонки is_mass_issue
+            cursor.execute("PRAGMA table_info(borrowed_books)")
+            columns = [column[1] for column in cursor.fetchall()]
+            
+            # Если колонки нет, добавляем её
+            if 'is_mass_issue' not in columns:
+                cursor.execute("""
+                    ALTER TABLE borrowed_books
+                    ADD COLUMN is_mass_issue INTEGER DEFAULT 0
+                """)
+            
+            # Проверяем наличие колонки expires_at
+            cursor.execute("PRAGMA table_info(book_reservations)")
+            columns = [column[1] for column in cursor.fetchall()]
+            
+            # Если колонки нет, добавляем её
+            if 'expires_at' not in columns:
+                cursor.execute("""
+                    ALTER TABLE book_reservations
+                    ADD COLUMN expires_at TIMESTAMP
+                """)
             
             conn.commit()
             
