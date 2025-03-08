@@ -11,6 +11,8 @@ class AdminStates(StatesGroup):
     waiting_for_student_qr = State()  # Для сканирования QR ученика
     waiting_for_books_qr = State()    # Для сканирования QR книг
     waiting_for_return_books = State() # Для массового возврата
+    waiting_for_book_selection = State()  # Для выбора книги из списка забронированных
+    waiting_for_book_qr = State()        # Для сканирования QR выбранной книги
 
 class AdminManageStates(StatesGroup):
     waiting_for_new_admin_id = State()

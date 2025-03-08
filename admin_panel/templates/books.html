@@ -81,10 +81,14 @@
         <table class="table table-striped">
             <thead>
                 <tr>
-                    <th>Название</th>
+                    <th>Название книги</th>
                     <th>Автор</th>
-                    <th>Тематика</th>
+                    <th>Тематика(Жанр)</th>
                     <th>Описание</th>
+                    <th>Кол-во страниц</th>
+                    <th>Номер издания</th>
+                    <th>Год издания</th>
+                    <th>Издательство</th>
                     <th>Доступно/Всего</th>
                     <th>Средняя цена</th>
                     <th>Действия</th>
@@ -97,6 +101,10 @@
                     <td>{{ book.author }}</td>
                     <td>{{ book.theme or '—' }}</td>
                     <td>{{ book.description }}</td>
+                    <td>{{ book.pages }}</td>
+                    <td>{{ book.edition_number or '—' }}</td>
+                    <td>{{ book.publication_year }}</td>
+                    <td>{{ book.publisher }}</td>
                     <td>{{ book.available_copies }}/{{ book.total_copies }}</td>
                     <td>
                         {% if book.avg_price > 0 %}
@@ -107,14 +115,19 @@
                     </td>
                     <td>
                         <button class="btn btn-sm btn-primary" 
-                                onclick='editBook({{ book.id }}, {{ book.title|tojson }}, {{ book.author|tojson }}, {{ book.description|tojson }}, {{ book.theme|tojson if book.theme else "null"|tojson }})' 
+                                onclick='editBook({{ book.id }}, {{ book.title|tojson }}, {{ book.author|tojson }}, 
+                                        {{ book.description|tojson }}, {{ book.theme|tojson if book.theme else "null"|tojson }},
+                                        {{ book.pages|tojson if book.pages else "null"|tojson }}, 
+                                        {{ book.edition_number|tojson if book.edition_number else "null"|tojson }},
+                                        {{ book.publication_year|tojson if book.publication_year else "null"|tojson }},
+                                        {{ book.publisher|tojson if book.publisher else "null"|tojson }})' 
                                 data-bs-toggle="tooltip" 
                                 title="Редактировать">
                             ✏️
                         </button>
                         <button class="btn btn-sm btn-danger" onclick="deleteBook({{ book.id }})" data-bs-toggle="tooltip" title="Удалить">🗑️</button>
                         <button class="btn btn-sm btn-warning" onclick="managePurchases({{ book.id }})" data-bs-toggle="tooltip" title="Управление закупками">📦</button>
-                        <a href="/admin/books/{{ book.id }}/qrcodes" class="btn btn-sm btn-info" data-bs-toggle="tooltip" title="QR коды">🔍</a>
+                        <a href="/books/{{ book.id }}/qrcodes" class="btn btn-sm btn-info" data-bs-toggle="tooltip" title="QR коды">🔍</a>
                     </td>
                 </tr>
                 {% endfor %}
@@ -168,9 +181,10 @@
             </div>
             <form id="bookForm">
                 <div class="modal-body">
-                    <input type="hidden" id="bookId" name="id">
+                    <input type="hidden" id="bookId">
+                    <input type="hidden" name="quantity" value="1">
                     <div class="mb-3">
-                        <label class="form-label">Название</label>
+                        <label class="form-label">Название книги</label>
                         <input type="text" class="form-control" id="title" name="title" required>
                     </div>
                     <div class="mb-3">
@@ -178,20 +192,28 @@
                         <input type="text" class="form-control" id="author" name="author" required>
                     </div>
                     <div class="mb-3">
-                        <label class="form-label">Тематика</label>
-                        <select class="form-select" id="theme" name="theme" required>
-                            <option value="">Выберите тематику</option>
-                            <option value="Художественная литература">Художественная литература</option>
-                            <option value="Научная литература">Научная литература</option>
-                            <option value="Учебная литература">Учебная литература</option>
-                            <option value="Техническая литература">Техническая литература</option>
-                            <option value="Детская литература">Детская литература</option>
-                            <option value="Справочная литература">Справочная литература</option>
-                        </select>
+                        <label class="form-label">Тематика(Жанр)</label>
+                        <input type="text" class="form-control" name="theme" required>
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Описание</label>
-                        <textarea class="form-control" id="description" name="description" rows="3"></textarea>
+                        <textarea class="form-control" id="description" name="description" required></textarea>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Количество страниц</label>
+                        <input type="number" class="form-control" name="pages" required min="1">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Номер издания (если есть)</label>
+                        <input type="text" class="form-control" name="edition_number">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Год издания</label>
+                        <input type="number" class="form-control" name="publication_year" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Издательство</label>
+                        <input type="text" class="form-control" name="publisher" required>
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -217,7 +239,7 @@
                         <div class="col-md-4">
                             <div class="mb-3">
                                 <label class="form-label">Количество экземпляров</label>
-                                <input type="number" class="form-control" name="quantity" required min="1">
+                                <input type="number" class="form-control" id="quantity" name="quantity" required min="1">
                             </div>
                         </div>
                         <div class="col-md-4">
@@ -257,6 +279,10 @@
     </div>
 </div>
 
+<!-- Контейнер для уведомлений -->
+<div id="toast-container" class="position-fixed bottom-0 end-0 p-3" style="z-index: 11">
+</div>
+
 <script>
 // Инициализация тултипов
 document.addEventListener('DOMContentLoaded', function() {
@@ -276,16 +302,35 @@ document.addEventListener('DOMContentLoaded', function() {
             window.location.href = `?page=1&search=${encodeURIComponent(searchQuery)}`;
         }, 500);
     });
+
+    // Добавляем обработчик для кнопки "Добавить книгу"
+    const addBookBtn = document.querySelector('.btn-success');
+    if (addBookBtn) {
+        addBookBtn.addEventListener('click', function() {
+            // Очищаем форму перед открытием модального окна
+            document.getElementById('bookForm').reset();
+            document.getElementById('bookId').value = '';
+            document.getElementById('modalTitle').textContent = 'Добавить книгу';
+            
+            // Открываем модальное окно
+            const modal = new bootstrap.Modal(document.getElementById('bookModal'));
+            modal.show();
+        });
+    }
 });
 
-function editBook(id, title, author, description, theme) {
+function editBook(id, title, author, description, theme, pages, edition_number, publication_year, publisher) {
     const modal = new bootstrap.Modal(document.getElementById('bookModal'));
     document.getElementById('modalTitle').textContent = 'Редактировать книгу';
     document.getElementById('bookId').value = id;
     document.getElementById('title').value = title;
     document.getElementById('author').value = author;
     document.getElementById('description').value = description || '';
-    document.getElementById('theme').value = theme || '';
+    document.querySelector('input[name="theme"]').value = theme || '';
+    document.querySelector('input[name="pages"]').value = pages || '';
+    document.querySelector('input[name="edition_number"]').value = edition_number || '';
+    document.querySelector('input[name="publication_year"]').value = publication_year || '';
+    document.querySelector('input[name="publisher"]').value = publisher || '';
     modal.show();
 }
 
@@ -295,7 +340,10 @@ function deleteBook(id) {
             method: 'POST'
         }).then(response => {
             if (response.ok) {
-                location.reload();
+                showToast('Книга успешно удалена', 'success');
+                setTimeout(() => location.reload(), 1500);
+            } else {
+                showToast('Ошибка при удалении книги', 'error');
             }
         });
     }
@@ -341,7 +389,10 @@ function managePurchases(bookId) {
                     })
                 }).then(response => {
                     if (response.ok) {
-                        location.reload();
+                        showToast('Закупка успешно добавлена', 'success');
+                        setTimeout(() => location.reload(), 1500);
+                    } else {
+                        showToast('Ошибка при добавлении закупки', 'error');
                     }
                 });
             };
@@ -355,34 +406,29 @@ function managePurchases(bookId) {
 document.getElementById('bookForm').addEventListener('submit', async function(e) {
     e.preventDefault();
     
-    const formData = {
-        title: document.getElementById('title').value,
-        author: document.getElementById('author').value,
-        description: document.getElementById('description').value,
-        theme: document.getElementById('theme').value
-    };
+    const formData = new FormData(e.target);
     
     const bookId = document.getElementById('bookId').value;
-    const url = bookId ? `/api/books/${bookId}` : '/api/books';
+    const url = bookId ? `/books/${bookId}/edit` : '/books/add';
     const method = bookId ? 'PUT' : 'POST';
     
     try {
         const response = await fetch(url, {
             method: method,
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(formData)
+            body: formData
         });
         
         if (response.ok) {
-            window.location.reload();
+            showToast(bookId ? 'Книга успешно отредактирована' : 'Книга успешно добавлена', 'success');
+            setTimeout(() => window.location.reload(), 1500);
         } else {
             const data = await response.json();
+            showToast(data.error || 'Ошибка при сохранении книги', 'error');
             alert(data.error || 'Ошибка при сохранении книги');
         }
     } catch (error) {
         console.error('Error:', error);
+        showToast('Ошибка при сохранении книги', 'error');
         alert('Ошибка при сохранении книги');
     }
 });
@@ -398,13 +444,57 @@ function uploadExcel(input) {
         body: formData
     }).then(response => {
         if (response.ok) {
-            location.reload();
+            showToast('Файл успешно загружен', 'success');
+            setTimeout(() => location.reload(), 1500);
         } else {
+            showToast('Ошибка при загрузке файла', 'error');
             alert('Ошибка при загрузке файла');
         }
     }).catch(error => {
         console.error('Error:', error);
+        showToast('Ошибка при загрузке файла', 'error');
         alert('Ошибка при загрузке файла');
+    });
+}
+
+// Функция для отображения уведомлений
+function showToast(message, type = 'success') {
+    const toastId = 'toast-' + Date.now();
+    const bgClass = type === 'success' ? 'bg-success' : type === 'error' ? 'bg-danger' : 'bg-primary';
+    
+    const toastHTML = `
+        <div id="${toastId}" class="toast show" role="alert" aria-live="assertive" aria-atomic="true" data-bs-autohide="true" data-bs-delay="3000">
+            <div class="toast-header ${bgClass} text-white">
+                <strong class="me-auto">${type === 'success' ? 'Успешно' : type === 'error' ? 'Ошибка' : 'Уведомление'}</strong>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="toast" aria-label="Close"></button>
+            </div>
+            <div class="toast-body">
+                ${message}
+            </div>
+        </div>
+    `;
+    
+    document.getElementById('toast-container').insertAdjacentHTML('beforeend', toastHTML);
+    const toastElement = document.getElementById(toastId);
+    
+    // Альтернативный способ инициализации и отображения Toast
+    try {
+        const toast = new bootstrap.Toast(toastElement);
+        toast.show();
+    } catch (e) {
+        console.error('Ошибка при отображении уведомления:', e);
+        // Если Bootstrap Toast не работает, добавим класс show вручную
+        toastElement.classList.add('show');
+        
+        // И удалим его через 3 секунды
+        setTimeout(() => {
+            toastElement.remove();
+        }, 3000);
+    }
+    
+    // Удаляем уведомление после скрытия
+    toastElement.addEventListener('hidden.bs.toast', function () {
+        toastElement.remove();
     });
 }
 </script>

@@ -21,8 +21,12 @@ def setup_database():
                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
                     title TEXT NOT NULL,
                     author TEXT NOT NULL,
+                    theme TEXT,
                     description TEXT,
-                    theme TEXT DEFAULT '',
+                    pages INTEGER,
+                    edition_number TEXT,
+                    publication_year INTEGER,
+                    publisher TEXT,
                     quantity INTEGER DEFAULT 1)''')
 
     cursor.execute('''CREATE TABLE IF NOT EXISTS book_copies
@@ -79,6 +83,21 @@ def setup_database():
                     status TEXT DEFAULT 'pending',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (user_id) REFERENCES users(id))''')
+    
+    # Проверяем наличие новых столбцов и добавляем их, если их нет
+    cursor.execute("PRAGMA table_info(books)")
+    columns = [column[1] for column in cursor.fetchall()]
+    
+    if 'pages' not in columns:
+        cursor.execute("ALTER TABLE books ADD COLUMN pages INTEGER")
+    if 'edition_number' not in columns:
+        cursor.execute("ALTER TABLE books ADD COLUMN edition_number TEXT")
+    if 'publication_year' not in columns:
+        cursor.execute("ALTER TABLE books ADD COLUMN publication_year INTEGER")
+    if 'publisher' not in columns:
+        cursor.execute("ALTER TABLE books ADD COLUMN publisher TEXT")
+    if 'theme' not in columns:
+        cursor.execute("ALTER TABLE books ADD COLUMN theme TEXT")
     
     conn.commit()
     conn.close()
@@ -175,7 +194,26 @@ def migrate_borrowed_books():
         with get_db() as conn:
             cursor = conn.cursor()
             
-            # Проверяем наличие колонки is_textbook
+            # Сначала проверяем, существует ли таблица borrowed_books
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='borrowed_books'")
+            if not cursor.fetchone():
+                # Если таблица не существует, создаем её
+                cursor.execute('''CREATE TABLE IF NOT EXISTS borrowed_books
+                              (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                               user_id INTEGER,
+                               copy_id INTEGER,
+                               book_id INTEGER,
+                               borrow_date TEXT,
+                               due_date TEXT,
+                               return_date TEXT,
+                               is_textbook INTEGER DEFAULT 0,
+                               FOREIGN KEY (user_id) REFERENCES users(id),
+                               FOREIGN KEY (copy_id) REFERENCES book_copies(id),
+                               FOREIGN KEY (book_id) REFERENCES books(id))''')
+                conn.commit()
+                return
+            
+            # Проверяем, есть ли колонка is_textbook
             cursor.execute("PRAGMA table_info(borrowed_books)")
             columns = [column[1] for column in cursor.fetchall()]
             

@@ -9,8 +9,33 @@
 </div>
 {% endif %}
 <div class="container mt-4">
-    <h2>Управление пользователями</h2>
+    <div class="row mb-4">
+        <div class="col">
+            <h1>Пользователи</h1>
+        </div>
+        <div class="col-auto">
+            <div class="btn-group me-2">
+                <div class="dropdown">
+                    <button class="btn btn-secondary dropdown-toggle" type="button" id="excelDropdown" data-bs-toggle="dropdown" aria-expanded="false">
+                        Excel
+                    </button>
+                    <ul class="dropdown-menu" aria-labelledby="excelDropdown">
+                        <li><a class="dropdown-item" href="/admin/users/template/download">📥 Скачать шаблон Excel</a></li>
+                        <li><a class="dropdown-item" href="#" onclick="document.getElementById('excelUpload').click()">📤 Загрузить из Excel</a></li>
+                    </ul>
+                </div>
+                <input type="file" id="excelUpload" style="display: none" accept=".xlsx" onchange="uploadExcel(this)">
+            </div>
+            <!-- <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addUserModal">
+                <i class="fas fa-plus"></i> Добавить пользователя
+            </button> -->
+        </div>
+    </div>
     
+    <!-- Контейнер для уведомлений -->
+    <div id="toast-container" class="position-fixed bottom-0 end-0 p-3" style="z-index: 11">
+    </div>
+
     <!-- Фильтры -->
     <div class="card mb-4">
         <div class="card-body">
@@ -183,5 +208,107 @@
             </tbody>
         </table>
     </div>
+    
+    <!-- Пагинация -->
+    {% if total_pages > 1 %}
+    <nav aria-label="Page navigation" class="mt-4">
+        <ul class="pagination justify-content-center">
+            <li class="page-item {% if current_page == 1 %}disabled{% endif %}">
+                <a class="page-link" href="?page=1&search={{ filters.search }}" aria-label="First">
+                    <span aria-hidden="true">««</span>
+                </a>
+            </li>
+            <li class="page-item {% if current_page == 1 %}disabled{% endif %}">
+                <a class="page-link" href="?page={{ current_page - 1 }}&search={{ filters.search }}" aria-label="Previous">
+                    <span aria-hidden="true">«</span>
+                </a>
+            </li>
+            
+            {% for page in range(max(1, current_page - 2), min(total_pages + 1, current_page + 3)) %}
+            <li class="page-item {% if page == current_page %}active{% endif %}">
+                <a class="page-link" href="?page={{ page }}&search={{ filters.search }}">{{ page }}</a>
+            </li>
+            {% endfor %}
+            
+            <li class="page-item {% if current_page == total_pages %}disabled{% endif %}">
+                <a class="page-link" href="?page={{ current_page + 1 }}&search={{ filters.search }}" aria-label="Next">
+                    <span aria-hidden="true">»</span>
+                </a>
+            </li>
+            <li class="page-item {% if current_page == total_pages %}disabled{% endif %}">
+                <a class="page-link" href="?page={{ total_pages }}&search={{ filters.search }}" aria-label="Last">
+                    <span aria-hidden="true">»»</span>
+                </a>
+            </li>
+        </ul>
+    </nav>
+    {% endif %}
 </div>
+
+<script>
+function uploadExcel(input) {
+    if (!input.files || !input.files[0]) return;
+    
+    const formData = new FormData();
+    formData.append('file', input.files[0]);
+    
+    fetch('/admin/users/upload', {
+        method: 'POST',
+        body: formData
+    }).then(response => {
+        if (response.ok) {
+            showToast('Файл успешно загружен', 'success');
+            setTimeout(() => location.reload(), 1500);
+        } else {
+            showToast('Ошибка при загрузке файла', 'error');
+            alert('Ошибка при загрузке файла');
+        }
+    }).catch(error => {
+        console.error('Error:', error);
+        showToast('Ошибка при загрузке файла', 'error');
+        alert('Ошибка при загрузке файла');
+    });
+}
+
+// Функция для отображения уведомлений
+function showToast(message, type = 'success') {
+    const toastId = 'toast-' + Date.now();
+    const bgClass = type === 'success' ? 'bg-success' : type === 'error' ? 'bg-danger' : 'bg-primary';
+    
+    const toastHTML = `
+        <div id="${toastId}" class="toast show" role="alert" aria-live="assertive" aria-atomic="true" data-bs-autohide="true" data-bs-delay="3000">
+            <div class="toast-header ${bgClass} text-white">
+                <strong class="me-auto">${type === 'success' ? 'Успешно' : type === 'error' ? 'Ошибка' : 'Уведомление'}</strong>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="toast" aria-label="Close"></button>
+            </div>
+            <div class="toast-body">
+                ${message}
+            </div>
+        </div>
+    `;
+    
+    document.getElementById('toast-container').insertAdjacentHTML('beforeend', toastHTML);
+    const toastElement = document.getElementById(toastId);
+    
+    // Альтернативный способ инициализации и отображения Toast
+    try {
+        const toast = new bootstrap.Toast(toastElement);
+        toast.show();
+    } catch (e) {
+        console.error('Ошибка при отображении уведомления:', e);
+        // Если Bootstrap Toast не работает, добавим класс show вручную
+        toastElement.classList.add('show');
+        
+        // И удалим его через 3 секунды
+        setTimeout(() => {
+            toastElement.remove();
+        }, 3000);
+    }
+    
+    // Удаляем уведомление после скрытия
+    toastElement.addEventListener('hidden.bs.toast', function () {
+        toastElement.remove();
+    });
+}
+</script>
 {% endblock %} 

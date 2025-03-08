@@ -11,7 +11,7 @@ from states.admin_states import AdminStates, AdminManageStates, AdminTeacherStat
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from datetime import datetime, timedelta
 import secrets
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, Message
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, Message, ReplyKeyboardRemove
 from utils.token_storage import add_token, remove_token
 import cv2
 import numpy as np
@@ -87,16 +87,41 @@ async def admin_panel(message: types.Message):
 @router.message(F.text == "🔍 Сканировать QR")
 async def scan_qr_command(message: types.Message):
     kb = InlineKeyboardBuilder()
-    kb.button(text="📤 Выдать одну книгу", callback_data="scan_issue")
+    kb.button(text="📤 Выдать одну книгу", callback_data="scan_issue_new")
     kb.button(text="📥 Вернуть одну книгу", callback_data="scan_return")
-    kb.button(text="📚 Массовая выдача", callback_data="mass_issue")
-    kb.button(text="📚 Массовый возврат", callback_data="mass_return")
+    kb.button(text="📚 Выдача учебников", callback_data="mass_issue")
+    kb.button(text="📚 Возврат учебников", callback_data="mass_return")
     kb.adjust(2)
     
     await message.answer(
         "📷 Выберите действие для сканирования:",
         reply_markup=kb.as_markup()
     )
+
+@router.callback_query(F.data == "scan_issue_new")
+async def start_issue_book(callback: types.CallbackQuery, state: FSMContext):
+    try:
+        logging.warning(f"DEBUG: Обработчик scan_issue_new сработал")
+        # Сначала очищаем состояние, чтобы избежать конфликтов
+        await state.clear()
+        
+        # Устанавливаем состояние ожидания QR-кода ученика
+        await state.set_state(AdminStates.waiting_for_student_qr)
+        
+        # Отправляем сообщение с инструкцией
+        await callback.message.answer(
+            "1️⃣ Отсканируйте QR-код ученика или отправьте его ID:",
+            reply_markup=ReplyKeyboardRemove()
+        )
+        
+        # Подтверждаем нажатие кнопки
+        await callback.answer("Ожидание QR-кода ученика")
+        
+        # Логируем для отладки
+        logging.info(f"Set state to waiting_for_student_qr for user {callback.from_user.id}")
+    except Exception as e:
+        logging.error(f"Error in start_issue_book: {e}")
+        await callback.answer("Произошла ошибка", show_alert=True)
 
 @router.message(F.text == "🌐 Веб-панель", admin_filter)
 async def web_panel(message: types.Message):
@@ -1088,7 +1113,7 @@ async def start_mass_issue(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
 
 @router.message(AdminStates.waiting_for_student_qr)
-async def process_student_for_mass_issue(message: types.Message, state: FSMContext):
+async def process_student_qr(message: types.Message, state: FSMContext):
     try:
         student_id = None
         
@@ -1111,227 +1136,163 @@ async def process_student_for_mass_issue(message: types.Message, state: FSMConte
         
         with get_db() as conn:
             cursor = conn.cursor()
+            
+            # Получаем информацию о пользователе и его забронированных книгах
             cursor.execute("""
-                SELECT full_name, class 
-                FROM users 
-                WHERE id = ? AND role = 'user'
+                SELECT 
+                    u.full_name, 
+                    u.class,
+                    b.id as book_id,
+                    b.title,
+                    b.author,
+                    r.id as reservation_id
+                FROM users u
+                LEFT JOIN book_reservations r ON u.id = r.user_id
+                LEFT JOIN books b ON r.book_id = b.id
+                WHERE u.id = ? AND r.status = 'pending'
             """, (student_id,))
             
-            student = cursor.fetchone()
-            if not student:
-                await message.answer("❌ Ученик не найден")
+            results = cursor.fetchall()
+            if not results:
+                await message.answer("❌ Пользователь не найден или у него нет забронированных книг")
                 return
+
+            student_name = results[0][0]
+            student_class = results[0][1]
             
-            # Сохраняем данные ученика
-            await state.update_data(
-                student_id=student_id,
-                student_name=student[0],
-                student_class=student[1],
-                books=[]  # Список для хранения отсканированных книг
-            )
-            
+            # Создаем клавиатуру с забронированными книгами
             kb = InlineKeyboardBuilder()
-            kb.button(text="✅ Завершить выдачу", callback_data="finish_mass_issue")
-            kb.button(text="❌ Отменить", callback_data="cancel_mass_issue")
+            for _, _, book_id, title, author, reservation_id in results:
+                if book_id:  # Проверяем, что есть забронированные книги
+                    kb.button(
+                        text=f"📖 {title} - {author}",
+                        callback_data=f"select_book_{reservation_id}"
+                    )
             kb.adjust(1)
             
+            await state.update_data(student_id=student_id, student_name=student_name)
             await message.answer(
-                f"2️⃣ Выбран ученик: {student[0]} ({student[1]})\n\n"
-                f"Теперь сканируйте QR-коды книг по одной.\n"
-                f"После завершения нажмите 'Завершить выдачу'",
+                f"2️⃣ Выбран читатель: {student_name} ({student_class})\n\n"
+                f"Выберите книгу для выдачи:",
                 reply_markup=kb.as_markup()
             )
             
-            await state.set_state(AdminStates.waiting_for_books_qr)
+            await state.set_state(AdminStates.waiting_for_book_selection)
             
     except ValueError:
-        await message.answer("❌ Некорректный ID ученика")
+        await message.answer("❌ Некорректный ID пользователя")
     except Exception as e:
-        logging.error(f"Error in process_student_for_mass_issue: {e}")
-        await message.answer("❌ Произошла ошибка")
+        logging.error(f"Error processing student QR: {e}")
+        await message.answer("❌ Произошла ошибка при обработке QR-кода")
 
-@router.message(AdminStates.waiting_for_books_qr, F.photo)
-async def process_book_for_mass_issue(message: types.Message, state: FSMContext):
+@router.callback_query(AdminStates.waiting_for_book_selection, F.data.startswith("select_book_"))
+async def process_book_selection(callback: types.CallbackQuery, state: FSMContext):
+    reservation_id = int(callback.data.split("_")[2])
+    
+    await callback.message.answer(
+        "3️⃣ Теперь отсканируйте QR-код экземпляра книги:"
+    )
+    await state.update_data(reservation_id=reservation_id)
+    await state.set_state(AdminStates.waiting_for_book_qr)
+
+@router.message(AdminStates.waiting_for_book_qr, F.photo)
+async def process_book_qr(message: types.Message, state: FSMContext):
     try:
-        # Получаем фото и декодируем QR
+        # Скачиваем фото
         photo = await message.bot.get_file(message.photo[-1].file_id)
         photo_bytes = await message.bot.download_file(photo.file_path)
+        
+        # Конвертируем в формат для opencv
         nparr = np.frombuffer(photo_bytes.read(), np.uint8)
         image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        
+        # Декодируем QR-код
         decoded_objects = decode(image)
         
         if not decoded_objects:
             await message.answer("❌ QR-код не найден. Попробуйте еще раз")
             return
             
+        # Получаем ID экземпляра из QR-кода
         copy_id = decoded_objects[0].data.decode('utf-8')
         data = await state.get_data()
         
         with get_db() as conn:
             cursor = conn.cursor()
             
-            # Проверяем, нет ли у ученика уже этой книги
-            cursor.execute("""
-                SELECT b.title
-                FROM borrowed_books bb
-                JOIN books b ON bb.book_id = b.id
-                JOIN book_copies bc ON bc.id = bb.copy_id
-                WHERE bb.user_id = ? 
-                AND bc.book_id = (SELECT book_id FROM book_copies WHERE id = ?)
-                AND bb.status = 'borrowed'
-            """, (data['student_id'], copy_id))
-            
-            existing_book = cursor.fetchone()
-            if existing_book:
-                await message.answer(f"❌ У ученика уже есть книга «{existing_book[0]}»")
-                return
-            
-            # Проверяем доступность книги
+            # Проверяем, что книга соответствует бронированию
             cursor.execute("""
                 SELECT 
+                    r.book_id,
                     b.title,
-                    b.author,
-                    bc.id,
-                    bc.book_id,
-                    (SELECT COUNT(*) 
-                     FROM borrowed_books bb 
-                     WHERE bb.copy_id = bc.id 
-                     AND bb.status = 'borrowed') as is_borrowed
-                FROM book_copies bc
-                JOIN books b ON bc.book_id = b.id
-                WHERE bc.id = ?
+                    b.author
+                FROM book_reservations r
+                JOIN books b ON r.book_id = b.id
+                WHERE r.id = ?
+            """, (data['reservation_id'],))
+            
+            reservation = cursor.fetchone()
+            if not reservation:
+                await message.answer("❌ Бронирование не найдено")
+                return
+                
+            # Проверяем, что экземпляр соответствует книге
+            cursor.execute("""
+                SELECT book_id, status
+                FROM book_copies
+                WHERE id = ?
             """, (copy_id,))
             
-            book = cursor.fetchone()
-            if not book:
-                await message.answer("❌ Книга не найдена")
+            copy = cursor.fetchone()
+            if not copy:
+                await message.answer("❌ Экземпляр книги не найден")
                 return
                 
-            title, author, copy_id, book_id, is_borrowed = book
-            
-            if is_borrowed > 0:
-                await message.answer("❌ Эта книга уже выдана")
+            if copy[0] != reservation[0]:
+                await message.answer(
+                    "❌ Этот экземпляр не соответствует забронированной книге\n"
+                    f"Нужна книга: {reservation[1]} ({reservation[2]})"
+                )
                 return
-            
-            # Добавляем книгу в список
-            books = data.get('books', [])
-            if any(b['copy_id'] == str(copy_id) for b in books):
-                await message.answer("❌ Эта книга уже добавлена в список")
+                
+            if copy[1] != 'available':
+                await message.answer("❌ Этот экземпляр уже выдан")
                 return
+                
+            # Выдаем книгу
+            cursor.execute("""
+                INSERT INTO borrowed_books (
+                    user_id, book_id, copy_id, reservation_id,
+                    borrow_date, return_date, status
+                ) VALUES (
+                    ?, ?, ?, ?,
+                    datetime('now'),
+                    datetime('now', '+14 days'),
+                    'borrowed'
+                )
+            """, (data['student_id'], reservation[0], copy_id, data['reservation_id']))
             
-            # Добавляем книгу в список
-            books.append({
-                'copy_id': str(copy_id),
-                'book_id': str(book_id),
-                'title': title,
-                'author': author
-            })
+            # Обновляем статус бронирования
+            cursor.execute("""
+                UPDATE book_reservations
+                SET status = 'completed'
+                WHERE id = ?
+            """, (data['reservation_id'],))
             
-            await state.update_data(books=books)
-            
-            # Обновляем сообщение со списком книг
-            book_list = "\n".join(f"📖 {b['title']} ({b['author']})" for b in books)
-            
-            kb = InlineKeyboardBuilder()
-            kb.button(text="✅ Завершить выдачу", callback_data="finish_mass_issue")
-            kb.button(text="❌ Отменить", callback_data="cancel_mass_issue")
-            kb.adjust(1)
+            conn.commit()
             
             await message.answer(
-                f"📚 Отсканированные книги ({len(books)}):\n\n{book_list}\n\n"
-                "Продолжайте сканировать книги или нажмите 'Завершить выдачу'",
-                reply_markup=kb.as_markup()
+                f"✅ Книга выдана:\n"
+                f"📖 {reservation[1]}\n"
+                f"👤 {data['student_name']}\n"
+                f"📅 Срок возврата: через 14 дней"
             )
             
-    except Exception as e:
-        logging.error(f"Error in process_book_for_mass_issue: {e}")
-        await message.answer("❌ Произошла ошибка при сканировании книги")
-
-@router.callback_query(F.data == "finish_mass_issue")
-async def finish_mass_issue(callback: types.CallbackQuery, state: FSMContext):
-    try:
-        data = await state.get_data()
-        books = data.get('books', [])
-        
-        if not books:
-            await callback.answer("❌ Не отсканировано ни одной книги", show_alert=True)
-            return
-        
-        # Определяем дату возврата (30 мая)
-        current_date = datetime.now()
-        if current_date.month < 6:  # Если сейчас до июня
-            return_date = datetime(current_date.year, 5, 30)
-        else:  # Если после июня, то возврат в следующем году
-            return_date = datetime(current_date.year + 1, 5, 30)
-        
-        with get_db() as conn:
-            cursor = conn.cursor()
+            await state.clear()
             
-            # Начинаем транзакцию
-            cursor.execute("BEGIN")
-            
-            try:
-                for book in books:
-                    # Создаем запись о выдаче
-                    cursor.execute("""
-                        INSERT INTO borrowed_books (
-                            user_id, 
-                            book_id, 
-                            copy_id, 
-                            borrow_date, 
-                            return_date, 
-                            status,
-                            is_mass_issue
-                        ) VALUES (?, ?, ?, datetime('now'), ?, 'borrowed', 1)
-                    """, (
-                        data['student_id'],
-                        book['book_id'],
-                        book['copy_id'],
-                        return_date.strftime("%Y-%m-%d %H:%M:%S")
-                    ))
-                    
-                    # Обновляем статус копии
-                    cursor.execute("""
-                        UPDATE book_copies 
-                        SET status = 'borrowed' 
-                        WHERE id = ?
-                    """, (book['copy_id'],))
-                
-                conn.commit()
-                
-                await callback.message.edit_text(
-                    f"✅ Выдано книг: {len(books)}\n"
-                    f"👤 Ученик: {data['student_name']}\n"
-                    f"📅 Срок возврата: 30 мая {return_date.year}\n\n"
-                    f"📚 Список книг:\n" +
-                    "\n".join(f"📖 {b['title']}" for b in books)
-                )
-                
-                # Уведомляем ученика
-                try:
-                    await callback.bot.send_message(
-                        data['student_id'],
-                        f"📚 Вам выдано {len(books)} учебников:\n\n" +
-                        "\n".join(f"📖 {b['title']}" for b in books) +
-                        f"\n\n📅 Срок возврата: 30 мая {return_date.year}"
-                    )
-                except Exception as e:
-                    logging.error(f"Error sending notification to student: {e}")
-                
-            except Exception as e:
-                cursor.execute("ROLLBACK")
-                raise e
-                
-        await state.clear()
-        
     except Exception as e:
-        logging.error(f"Error in finish_mass_issue: {e}")
-        await callback.answer("❌ Произошла ошибка при выдаче книг", show_alert=True)
-
-@router.callback_query(F.data == "cancel_mass_issue")
-async def cancel_mass_issue(callback: types.CallbackQuery, state: FSMContext):
-    await state.clear()
-    await callback.message.edit_text("❌ Выдача книг отменена")
+        logging.error(f"Error processing book QR: {e}")
+        await message.answer("❌ Произошла ошибка при обработке QR-кода")
 
 @router.callback_query(F.data == "mass_return")
 async def start_mass_return(callback: types.CallbackQuery, state: FSMContext):
@@ -1466,13 +1427,6 @@ async def finish_mass_return(callback: types.CallbackQuery, state: FSMContext):
                         SET status = 'returned' 
                         WHERE id = ?
                     """, (book['borrow_id'],))
-                    
-                    # Обновляем статус копии
-                    cursor.execute("""
-                        UPDATE book_copies 
-                        SET status = 'available' 
-                        WHERE id = ?
-                    """, (book['copy_id'],))
                 
                 conn.commit()
                 
@@ -1520,4 +1474,12 @@ async def finish_mass_return(callback: types.CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "cancel_mass_return")
 async def cancel_mass_return(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
-    await callback.message.edit_text("❌ Возврат книг отменен") 
+    await callback.message.edit_text("❌ Возврат книг отменен")
+
+# Этот обработчик перехватывает ВСЕ callbacks и мешает работе остальных
+# Временно закомментируем его для отладки
+# @router.callback_query()
+async def log_all_callbacks(callback: types.CallbackQuery):
+    logging.warning(f"DEBUG: Получен callback: {callback.data}")
+    # Позволяем обработку продолжиться
+    return False 
