@@ -16,6 +16,9 @@ from aiogram.exceptions import TelegramBadRequest
 import io
 import qrcode
 from io import BytesIO
+from pyzbar.pyzbar import decode
+import numpy as np
+import cv2
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -58,10 +61,11 @@ def get_main_keyboard():
         ],
         [
             types.KeyboardButton(text="📖 Предложить книгу"),
-            types.KeyboardButton(text="📚 Учебники")
+            types.KeyboardButton(text="📚 Мои учебники")
         ],
         [
-            types.KeyboardButton(text="👤 Мой профиль")
+            types.KeyboardButton(text="👤 QR- код"),
+            types.KeyboardButton(text="🔍 Найти владельца книги")
         ]
     ]
     
@@ -532,7 +536,7 @@ async def process_borrow(callback: types.CallbackQuery):
 @router.callback_query(F.data.startswith("extend:"))
 async def handle_extend_request(callback: types.CallbackQuery):
     try:
-        borrow_id = callback.data.split(":")[1]
+        borrow_id = int(callback.data.split(":")[1].split('.')[0])
         
         with get_db() as conn:
             cursor = conn.cursor()
@@ -710,8 +714,8 @@ async def show_my_books(message: types.Message):
                     END as status,
                     COALESCE(records.return_date, records.created_at) as return_date,
                     COALESCE(records.borrow_date, records.created_at) as borrow_date,
-                    COALESCE(records.copy_id, 0) as copy_id,
-                    records.id as record_id,
+                    CAST(COALESCE(records.copy_id, 0) AS INTEGER) as copy_id,
+                    CAST(records.id AS INTEGER) as record_id,
                     records.expires_at as expires_at
                 FROM (
                     SELECT 
@@ -723,8 +727,8 @@ async def show_my_books(message: types.Message):
                     WHERE user_id = ? AND status = 'pending'
                     UNION ALL
                     SELECT 
-                        id, user_id, book_id, status, borrow_date as created_at,
-                        copy_id, return_date, borrow_date,
+                        CAST(id AS INTEGER) as id, user_id, book_id, status, borrow_date as created_at,
+                        CAST(copy_id AS INTEGER) as copy_id, return_date, borrow_date,
                         NULL as expires_at,
                         'borrowed' as source
                     FROM borrowed_books 
@@ -751,50 +755,63 @@ async def show_my_books(message: types.Message):
             current_time = datetime.now()
             
             for book in books:
-                title, author, status, return_date, borrow_date, copy_id, record_id, expires_at = book
-                
-                if status == 'borrowed':
-                    # Форматируем даты для отображения
-                    formatted_return = datetime.strptime(return_date, "%Y-%m-%d %H:%M:%S").strftime("%d.%m.%Y")
-                    formatted_borrow = datetime.strptime(borrow_date, "%Y-%m-%d %H:%M:%S").strftime("%d.%m.%Y")
+                try:
+                    title, author, status, return_date, borrow_date, copy_id, record_id, expires_at = book
                     
-                    book_info = (
-                        f"📖 {title}\n"
-                        f"✍️ {author}\n"
-                        f"🔢 ID экземпляра: {copy_id}\n"
-                        f"📅 Взята: {formatted_borrow}\n"
-                        f"📅 Вернуть до: {formatted_return}\n"
-                    )
-                    borrowed.append(book_info)
-                    kb.button(
-                        text=f"🕒 Продлить: {title}",
-                        callback_data=f"extend:{record_id}"
-                    )
-                else:
-                    # Для забронированных книг показываем оставшееся время
-                    expires = datetime.strptime(expires_at, "%Y-%m-%d %H:%M:%S")
-                    days_left = (expires - current_time).days
-                    hours_left = ((expires - current_time).seconds // 3600)
+                    # Принудительно обрабатываем все числовые значения, чтобы гарантировать их целостность
+                    try:
+                        record_id = int(float(record_id)) if record_id else 0
+                        copy_id = int(float(copy_id)) if copy_id else 0
+                    except Exception as e:
+                        logging.error(f"Error converting IDs: record_id={record_id}, copy_id={copy_id}, error={e}")
+                        continue  # Пропускаем проблемную запись
                     
-                    time_left_text = ""
-                    if days_left > 0:
-                        time_left_text = f"(осталось {days_left} дн.)"
-                    elif hours_left > 0:
-                        time_left_text = f"(осталось {hours_left} ч.)"
+                    if status == 'borrowed':
+                        # Форматируем даты для отображения
+                        formatted_return = datetime.strptime(return_date.split('.')[0], "%Y-%m-%d %H:%M:%S").strftime("%d.%m.%Y")
+                        formatted_borrow = datetime.strptime(borrow_date.split('.')[0], "%Y-%m-%d %H:%M:%S").strftime("%d.%m.%Y")
+                        
+                        book_info = (
+                            f"📖 {title}\n"
+                            f"✍️ {author}\n"
+                            f"🔢 ID экземпляра: {copy_id}\n"
+                            f"📅 Взята: {formatted_borrow}\n"
+                            f"📅 Вернуть до: {formatted_return}\n"
+                        )
+                        borrowed.append(book_info)
+                        kb.button(
+                            text=f"🕒 Продлить: {title}",
+                            callback_data=f"extend:{record_id}"
+                        )
                     else:
-                        time_left_text = "(бронь истекает)"
-                    
-                    book_info = (
-                        f"📖 {title}\n"
-                        f"✍️ {author}\n"
-                        f"📅 Забронирована: {datetime.strptime(borrow_date, '%Y-%m-%d %H:%M:%S').strftime('%d.%m.%Y')}\n"
-                        f"⏳ {time_left_text}\n"
-                    )
-                    booked.append(book_info)
-                    kb.button(
-                        text=f"❌ Отменить бронь: {title}",
-                        callback_data=f"cancel_booking:{record_id}"
-                    )
+                        # Для забронированных книг показываем оставшееся время
+                        expires = datetime.strptime(expires_at, "%Y-%m-%d %H:%M:%S")
+                        days_left = (expires - current_time).days
+                        hours_left = ((expires - current_time).seconds // 3600)
+                        
+                        time_left_text = ""
+                        if days_left > 0:
+                            time_left_text = f"Осталось {days_left} дн."
+                        elif hours_left > 0:
+                            time_left_text = f"Осталось {hours_left} ч."
+                        else:
+                            time_left_text = "(бронь истекает)"
+                        
+                        book_info = (
+                            f"📖 {title}\n"
+                            f"✍️ {author}\n"
+                            f"📅 Забронирована: {datetime.strptime(borrow_date, '%Y-%m-%d %H:%M:%S').strftime('%d.%m.%Y')}\n"
+                            f"📅 Бронь до: {expires.strftime('%d.%m.%Y %H:%M')}\n"
+                            f"⏳ {time_left_text}\n"
+                        )
+                        booked.append(book_info)
+                        kb.button(
+                            text=f"❌ Отменить бронь: {title}",
+                            callback_data=f"cancel_booking:{record_id}"
+                        )
+                except Exception as e:
+                    logging.error(f"Error processing book: {book}, error: {e}")
+                    continue  # Пропускаем проблемную книгу
             
             if borrowed:
                 text += "На руках:\n" + "\n".join(borrowed) + "\n"
@@ -808,35 +825,9 @@ async def show_my_books(message: types.Message):
         logging.error(f"Error in show_my_books: {e}")
         await message.answer("Произошла ошибка при получении списка книг")
 
-@router.callback_query(F.data.startswith("show_qr_"))
-async def show_book_qr(callback: types.CallbackQuery):
-    book_id, copy_id = map(int, callback.data.split("_")[2:])
-    
-    with get_db() as conn:
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT b.title, b.author, bc.id
-            FROM books b
-            JOIN book_copies bc ON b.id = bc.book_id
-            WHERE b.id = ? AND bc.id = ?
-        """, (book_id, copy_id))
-        book = cursor.fetchone()
-        
-        if not book:
-            await callback.answer("Книга не найдена")
-            return
-        
-        qr_data = generate_book_qr(book_id, copy_id)
-        
-        await callback.message.answer_photo(
-            qr_data,
-            caption=f"📚 {book[0]}\n✍️ {book[1]}\nID экземпляра: {book[2]}"
-        )
-
 @router.callback_query(F.data.startswith("extend_"))
-async def extend_book(callback: types.CallbackQuery):
-    borrow_id = int(callback.data.split("_")[1])
+async def extend_book(callback: types.CallbackQuery, state: FSMContext):
+    borrow_id = int(callback.data.split("_")[1].split('.')[0])
     
     with get_db() as conn:
         cursor = conn.cursor()
@@ -903,7 +894,7 @@ async def search_type_selected(callback: types.CallbackQuery, state: FSMContext)
 
 @router.message(UserStates.waiting_for_search)
 async def process_search(message: types.Message, page: int = 1, search_query: str = None):
-    menu_commands = ['📚 Каталог', '🔍 Поиск', '📖 Мои книги', '❓ Помощь','📝 Отзывы','📖 Предложить книгу','👤 Мой профиль','📚 Учебники']
+    menu_commands = ['📚 Каталог', '🔍 Поиск', '📖 Мои книги', '❓ Помощь','📝 Отзывы','📖 Предложить книгу','👤 QR- код','📚 Мои учебники']
     
     if message.text in menu_commands:
         await state.clear()
@@ -1101,7 +1092,7 @@ async def start_review(callback: types.CallbackQuery, state: FSMContext):
             # Создаем клавиатуру для оценки
             kb = InlineKeyboardBuilder()
             for i in range(1, 6):
-                kb.button(text="⭐" * i, callback_data=f"rating:{i}")
+                kb.button(text="1"*i +"⭐" * i, callback_data=f"rating:{i}")
             kb.button(text="Отмена", callback_data="cancel_review")
             kb.adjust(5, 1)
             
@@ -1438,7 +1429,7 @@ async def suggest_book_start(message: types.Message, state: FSMContext):
 
 @router.message(SuggestBookStates.waiting_for_title)
 async def process_book_title(message: types.Message, state: FSMContext):
-    menu_commands = ['📚 Каталог', '🔍 Поиск', '📖 Мои книги', '❓ Помощь','📝 Отзывы','📖 Предложить книгу','👤 Мой профиль','📚 Учебники']
+    menu_commands = ['📚 Каталог', '🔍 Поиск', '📖 Мои книги', '❓ Помощь','📝 Отзывы','📖 Предложить книгу','👤 QR- код','📚 Мои учебники']
     
     if message.text in menu_commands:
         await state.clear()
@@ -1453,7 +1444,7 @@ async def process_book_title(message: types.Message, state: FSMContext):
 
 @router.message(SuggestBookStates.waiting_for_url)
 async def process_book_url(message: types.Message, state: FSMContext):
-    menu_commands = ['📚 Каталог', '🔍 Поиск', '📖 Мои книги', '❓ Помощь','📝 Отзывы','📖 Предложить книгу','👤 Мой профиль','📚 Учебники']
+    menu_commands = ['📚 Каталог', '🔍 Поиск', '📖 Мои книги', '❓ Помощь','📝 Отзывы','📖 Предложить книгу','👤 QR- код','📚 Мои учебники']
     
     if message.text in menu_commands:
         await state.clear()
@@ -1474,7 +1465,7 @@ async def process_book_url(message: types.Message, state: FSMContext):
 
 @router.message(SuggestBookStates.waiting_for_price)
 async def process_book_price(message: types.Message, state: FSMContext):
-    menu_commands = ['📚 Каталог', '🔍 Поиск', '📖 Мои книги', '❓ Помощь','📝 Отзывы','📖 Предложить книгу','👤 Мой профиль','📚 Учебники']
+    menu_commands = ['📚 Каталог', '🔍 Поиск', '📖 Мои книги', '❓ Помощь','📝 Отзывы','📖 Предложить книгу','👤 QR- код','📚 Мои учебники']
     
     if message.text in menu_commands:
         await state.clear()
@@ -1497,7 +1488,7 @@ async def process_book_price(message: types.Message, state: FSMContext):
 
 @router.message(SuggestBookStates.waiting_for_reason)
 async def process_book_reason(message: types.Message, state: FSMContext):
-    menu_commands = ['📚 Каталог', '🔍 Поиск', '📖 Мои книги', '❓ Помощь','📝 Отзывы','📖 Предложить книгу','👤 Мой профиль','📚 Учебники']
+    menu_commands = ['📚 Каталог', '🔍 Поиск', '📖 Мои книги', '❓ Помощь','📝 Отзывы','📖 Предложить книгу','👤 QR- код','📚 Мои учебники']
     
     if message.text in menu_commands:
         await state.clear()
@@ -1536,7 +1527,7 @@ async def process_book_reason(message: types.Message, state: FSMContext):
             conn.close()
             await state.clear() 
 
-@router.message(F.text == "👤 Мой профиль")
+@router.message(F.text == "👤 QR- код")
 async def show_profile(message: types.Message):
     if await check_blocked_user(message):
         return
@@ -1624,7 +1615,7 @@ async def show_profile(message: types.Message):
         logging.error(f"Error in show_profile: {e}")
         await message.answer("❌ Произошла ошибка при получении профиля")
 
-@router.message(F.text == "📚 Учебники")
+@router.message(F.text == "📚 Мои учебники")
 async def show_textbooks(message: types.Message):
     if await check_blocked_user(message):
         return
@@ -1656,18 +1647,123 @@ async def show_textbooks(message: types.Message):
             text = "📚 Ваши учебники:\n\n"
             
             for title, author, borrow_date, return_date in books:
-                borrow = datetime.strptime(borrow_date, "%Y-%m-%d %H:%M:%S").strftime("%d.%m.%Y")
-                return_date = datetime.strptime(return_date, "%Y-%m-%d %H:%M:%S").strftime("%d.%m.%Y")
-                
-                text += (
-                    f"📖 {title}\n"
-                    f"✍️ {author}\n"
-                    f"📅 Взят: {borrow}\n"
-                    f"📅 Вернуть до: {return_date}\n\n"
-                )
+                try:
+                    # Обрабатываем дату с возможными миллисекундами
+                    # Сначала пробуем стандартный формат
+                    try:
+                        borrow = datetime.strptime(borrow_date, "%Y-%m-%d %H:%M:%S").strftime("%d.%m.%Y")
+                    except ValueError:
+                        # Если не получилось, пробуем формат с миллисекундами
+                        borrow = datetime.strptime(borrow_date.split(".")[0], "%Y-%m-%d %H:%M:%S").strftime("%d.%m.%Y")
+                    
+                    try:
+                        return_date_formatted = datetime.strptime(return_date, "%Y-%m-%d %H:%M:%S").strftime("%d.%m.%Y")
+                    except ValueError:
+                        # Если не получилось, пробуем формат с миллисекундами
+                        return_date_formatted = datetime.strptime(return_date.split(".")[0], "%Y-%m-%d %H:%M:%S").strftime("%d.%m.%Y")
+                    
+                    text += (
+                        f"📖 {title}\n"
+                        f"✍️ {author}\n"
+                        f"📅 Взят: {borrow}\n"
+                        f"📅 Вернуть до: {return_date_formatted}\n\n"
+                    )
+                except Exception as date_error:
+                    logging.error(f"Error formatting date for book {title}: {date_error}")
+                    # В случае ошибки просто выводим книгу без дат
+                    text += (
+                        f"📖 {title}\n"
+                        f"✍️ {author}\n\n"
+                    )
             
             await message.answer(text)
             
     except Exception as e:
         logging.error(f"Error in show_textbooks: {e}")
-        await message.answer("❌ Произошла ошибка при получении списка учебников") 
+        await message.answer("❌ Произошла ошибка при получении списка учебников")
+
+@router.message(F.text == "🔍 Найти владельца книги")
+async def find_book_owner(message: types.Message, state: FSMContext):
+    if await check_blocked_user(message):
+        return
+    
+    if not await check_registration(message):
+        return
+    
+    await state.set_state(UserStates.waiting_for_book_qr)
+    await message.answer(
+        "📷 Отсканируйте QR-код книги, чтобы найти её владельца.\n"
+        "Просто отправьте фотографию QR-кода."
+    )
+
+@router.message(UserStates.waiting_for_book_qr)
+async def process_book_qr(message: types.Message, state: FSMContext):
+    try:
+        if not message.photo:
+            await message.answer("❌ Пожалуйста, отправьте фотографию QR-кода книги.")
+            return
+            
+        # Обработка QR-кода
+        photo = await message.bot.get_file(message.photo[-1].file_id)
+        photo_bytes = await message.bot.download_file(photo.file_path)
+        nparr = np.frombuffer(photo_bytes.read(), np.uint8)
+        image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        decoded_objects = decode(image)
+        
+        if not decoded_objects:
+            await message.answer("❌ QR-код не найден. Попробуйте еще раз.")
+            return
+            
+        copy_id = int(decoded_objects[0].data.decode('utf-8').split('.')[0])
+        
+        with get_db() as conn:
+            cursor = conn.cursor()
+            
+            # Получаем информацию о книге и её владельце
+            cursor.execute("""
+                SELECT 
+                    b.title,
+                    b.author,
+                    u.full_name as user_name,
+                    u.class as user_class,
+                    t.full_name as teacher_name
+                FROM book_copies bc
+                JOIN books b ON bc.book_id = b.id
+                LEFT JOIN borrowed_books bb ON bc.id = bb.copy_id AND bb.status = 'borrowed'
+                LEFT JOIN users u ON bb.user_id = u.id
+                LEFT JOIN users t ON u.class = t.class AND t.role = 'teacher'
+                WHERE bc.id = ?
+            """, (copy_id,))
+            
+            result = cursor.fetchone()
+            
+            if not result:
+                await message.answer("❌ Книга не найдена в базе данных.")
+                await state.clear()
+                return
+                
+            title, author, user_name, user_class, teacher_name = result
+            
+            if not user_name:
+                await message.answer(
+                    f"📖 Книга: {title} - {author}\n\n"
+                    f"📌 Статус: Свободна (не выдана)"
+                )
+            else:
+                response = f"📖 Книга: {title} - {author}\n\n"
+                response += f"👤 Владелец: {user_name}\n"
+                
+                if user_class:
+                    response += f"🏫 Класс: {user_class}\n"
+                    
+                if teacher_name:
+                    response += f"👨‍🏫 Учитель: {teacher_name}\n"
+                
+                await message.answer(response)
+            
+            await state.clear()
+            
+    except Exception as e:
+        logging.error(f"Error in process_book_qr: {e}")
+        await message.answer("❌ Произошла ошибка при обработке QR-кода.")
+        await state.clear() 

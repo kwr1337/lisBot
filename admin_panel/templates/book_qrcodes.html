@@ -29,7 +29,7 @@
         </div>
     </div>
 
-    <!-- Заменим блок фильтров и поиска -->
+    <!-- Фильтры и переключатель режимов -->
     <div class="card mb-4 no-print">
         <div class="card-body">
             <div class="row g-3">
@@ -47,7 +47,7 @@
                 </div>
                 <div class="col-md-6">
                     <div class="d-flex justify-content-end">
-                        <div class="btn-group" role="group">
+                        <div class="btn-group me-3" role="group">
                             <input type="radio" class="btn-check" name="statusFilter" id="all" value="all" checked>
                             <label class="btn btn-outline-primary" for="all">
                                 🔄 Все
@@ -68,40 +68,109 @@
                                 ❌ Списанные
                             </label>
                         </div>
+                        
+                        <!-- Переключатель режимов отображения -->
+                        <div class="btn-group" role="group">
+                            <input type="radio" class="btn-check" name="viewMode" id="gridView" value="grid" checked>
+                            <label class="btn btn-outline-secondary" for="gridView">
+                                📱 Сетка
+                            </label>
+
+                            <input type="radio" class="btn-check" name="viewMode" id="tableView" value="table">
+                            <label class="btn btn-outline-secondary" for="tableView">
+                                📋 Таблица
+                            </label>
+                        </div>
                     </div>
                 </div>
             </div>
         </div>
     </div>
     
-    <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-4" id="qrCodesContainer">
-        {% for copy in copies %}
-        <div class="col qr-code-item" data-id="{{ copy.id }}" data-status="{{ copy.status }}">
-            <div class="card h-100 print-clean">
-                <div class="card-body text-center">
-                    <div class="form-check no-print mb-2">
-                        <input class="form-check-input" type="checkbox" value="{{ copy.id }}" id="qr_{{ copy.id }}">
-                        <label class="form-check-label" for="qr_{{ copy.id }}">
-                            Выбрать для печати/списания
-                        </label>
-                    </div>
-                    <div class="qr-content">
-                        <div class="qr-code">
-                            <img src="/qr/{{ copy.id }}" alt="QR Code">
+    <!-- Режим сетки (оригинальный) -->
+    <div id="gridModeContainer">
+        <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-4" id="qrCodesContainer">
+            {% for copy in copies %}
+            <div class="col qr-code-item" data-id="{{ copy.id }}" data-status="{{ copy.status }}" data-author="{{ book.author }}" data-title="{{ book.title }}">
+                <div class="card h-100 print-clean">
+                    <div class="card-body text-center">
+                        <div class="form-check no-print mb-2">
+                            <input class="form-check-input" type="checkbox" value="{{ copy.id }}" id="qr_{{ copy.id }}">
+                            <label class="form-check-label" for="qr_{{ copy.id }}">
+                                Выбрать для печати/списания
+                            </label>
                         </div>
-                        <p class="card-text small">
-                            {{ book.title }}<br>
-                            {{ book.author }}<br>
-                            ID: {{ copy.id }}
-                        </p>
-                        <div class="no-print">
+                        <div class="qr-content" data-id="{{ copy.id }}" data-author="{{ book.author }}" data-title="{{ book.title }}">
+                            <div class="qr-code" data-title="{{ book.title }}">
+                                <img src="/qr/{{ copy.id }}" alt="QR Code">
+                            </div>
+                            <p class="card-text small">
+                                {{ book.title }}<br>
+                                {{ book.author }}<br>
+                                ID: {{ copy.id }}
+                            </p>
+                            <div class="no-print">
+                                {% if copy.status == 'available' %}
+                                    <span class="badge bg-success">Доступен</span>
+                                {% elif copy.status == 'borrowed' %}
+                                    <span class="badge bg-warning">Выдан</span>
+                                    {% if copy.borrowed_by %}
+                                        <br>Читатель: {{ copy.borrowed_by }}
+                                    {% endif %}
+                                {% elif copy.status == 'written_off' %}
+                                    <span class="badge bg-danger">Списан</span>
+                                {% elif copy.status == 'booked' %}
+                                    <span class="badge bg-info">Забронирована</span>
+                                {% else %}
+                                    <span class="badge bg-secondary">{{ copy.status }}</span>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    
+    <!-- Режим таблицы (новый) -->
+    <div id="tableModeContainer" style="display:none;">
+        <div class="table-responsive">
+            <table class="table table-striped table-hover">
+                <thead class="table-dark">
+                    <tr>
+                        <th class="text-center" style="width: 40px;">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="selectAllTable">
+                            </div>
+                        </th>
+                        <th style="width: 80px;">ID</th>
+                        <th style="width: 100px;">QR-код</th>
+                        <th>Название</th>
+                        <th>Автор</th>
+                        <th>Статус</th>
+                        <th>Информация</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for copy in copies %}
+                    <tr class="qr-table-row" data-id="{{ copy.id }}" data-status="{{ copy.status }}">
+                        <td class="text-center">
+                            <div class="form-check">
+                                <input class="form-check-input table-checkbox" type="checkbox" value="{{ copy.id }}" id="table_qr_{{ copy.id }}">
+                            </div>
+                        </td>
+                        <td>{{ copy.id }}</td>
+                        <td class="text-center">
+                            <img src="/qr/{{ copy.id }}" alt="QR Code" style="width: 70px; height: 70px;">
+                        </td>
+                        <td>{{ book.title }}</td>
+                        <td>{{ book.author }}</td>
+                        <td>
                             {% if copy.status == 'available' %}
                                 <span class="badge bg-success">Доступен</span>
                             {% elif copy.status == 'borrowed' %}
                                 <span class="badge bg-warning">Выдан</span>
-                                {% if copy.borrowed_by %}
-                                    <br>Читатель: {{ copy.borrowed_by }}
-                                {% endif %}
                             {% elif copy.status == 'written_off' %}
                                 <span class="badge bg-danger">Списан</span>
                             {% elif copy.status == 'booked' %}
@@ -109,12 +178,17 @@
                             {% else %}
                                 <span class="badge bg-secondary">{{ copy.status }}</span>
                             {% endif %}
-                        </div>
-                    </div>
-                </div>
-            </div>
+                        </td>
+                        <td>
+                            {% if copy.status == 'borrowed' and copy.borrowed_by %}
+                                <small>Читатель: {{ copy.borrowed_by }}</small>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
         </div>
-        {% endfor %}
     </div>
 </div>
 
@@ -144,6 +218,24 @@
 </div>
 
 <style>
+    /* Существующие стили... */
+    
+    /* Стили для табличного режима */
+    #tableModeContainer img {
+        transition: transform 0.2s;
+    }
+    
+    #tableModeContainer img:hover {
+        transform: scale(1.5);
+    }
+    
+    @media print {
+        #tableModeContainer {
+            display: none !important;
+        }
+    }
+    
+    /* Остальные существующие стили... */
     @media print {
         .no-print {
             display: none !important;
@@ -160,17 +252,87 @@
         }
         
         .qr-content {
-            padding: 5mm !important;
-            text-align: center !important;
+            position: relative !important;
+            padding: 0 !important;
+            width: 100% !important;
+            height: 100% !important;
+            display: flex !important;
+            flex-direction: column !important;
+            justify-content: center !important;
+            align-items: center !important;
+        }
+        
+        .qr-code {
+            margin: 0 auto !important;
+            padding: 0 !important;
+            width: 100% !important;
+            height: 100% !important;
+            display: flex !important;
+            justify-content: center !important;
+            align-items: center !important;
+        }
+        
+        .qr-code img {
+            width: 42mm !important;
+            height: 42mm !important;
+            margin: 0 !important;
+            padding: 0 !important;
+        }
+        
+        .card-text {
+            display: none !important;
+        }
+        
+        .qr-content:before {
+            content: "ID экземпляра: " attr(data-id) !important;
+            display: block !important;
+            text-align: center !important;  
+            margin-bottom: -5mm !important;
+            margin-top: 0 !important;
+            padding-top: 0 !important;
+            font-size: 8pt !important;
+            position: relative !important;
+            z-index: 10 !important;
+            width: 100% !important;
+            position: absolute !important;
+            top: 1mm !important;
+        }
+        
+        .qr-content:after {
+            content: "Автор: " attr(data-author) !important;
+            position: absolute !important;
+            left: 0 !important;
+            top: 30% !important;
+            writing-mode: vertical-rl !important;
+            transform: rotate(180deg) !important;
+            font-size: 8pt !important;
+            white-space: nowrap !important;
+            margin-left: 0 !important;
+            padding-left: 0 !important;
+        }
+        
+        .qr-code:after {
+            content: "Название: " attr(data-title) !important;
+            position: absolute !important;
+            right: 0 !important;
+            top: 30% !important;
+            writing-mode: vertical-lr !important;
+            font-size: 8pt !important;
+            white-space: nowrap !important;
+            margin-right: 0 !important;
+            padding-right: 0 !important;
         }
         
         .qr-code-item {
             page-break-inside: avoid !important;
             float: left !important;
-            width: 70mm !important;
-            height: 90mm !important;
-            padding: 5mm !important;
+            width: 52mm !important;
+            height: 52mm !important;
+            padding: 2mm !important;
             margin: 0 !important;
+            position: relative !important;
+            border: 1px dashed #999 !important;
+            box-sizing: border-box !important;
         }
         
         .qr-code-item.hidden-print {
@@ -186,34 +348,44 @@
         
         .row {
             margin: 0 !important;
-            display: block !important;
+            display: flex !important;
+            flex-wrap: wrap !important;
+            justify-content: space-around !important;
         }
         
         img {
-            width: 50mm !important;
-            height: 50mm !important;
+            width: 30mm !important;
+            height: 30mm !important;
             margin-bottom: 3mm !important;
         }
         
-        .card-text {
-            margin: 0 !important;
-            font-size: 10pt !important;
-            line-height: 1.2 !important;
+        .qr-code img {
+            width: 50mm !important;
+            height: 50mm !important;
         }
         
+        .text-start, .text-end {
+            font-size: 8pt !important;
+        }
+        
+        .text-center.mt-2 {
+            margin-top: 2mm !important;
+            font-size: 9pt !important;
+        }
+        
+        .badge {
+            display: none !important;
+        }
+        
+        /* Настройки страницы для печати */
         @page {
             size: A4;
             margin: 10mm;
         }
         
         body {
-            padding: 0 !important;
             margin: 0 !important;
-            width: 210mm !important;
-        }
-        
-        .badge {
-            display: none !important;
+            padding: 0 !important;
         }
     }
     
@@ -254,6 +426,12 @@
         color: white;
     }
     
+    .btn-check:checked + .btn-outline-secondary {
+        background-color: var(--bs-secondary);
+        border-color: var(--bs-secondary);
+        color: white;
+    }
+    
     @media (max-width: 768px) {
         .btn-group {
             width: 100%;
@@ -266,10 +444,51 @@
             font-size: 0.8rem;
         }
     }
+    
+    .position-relative {
+        position: relative;
+    }
+    
+    .position-absolute {
+        position: absolute;
+    }
+    
+    .top-0 {
+        top: 0;
+    }
+    
+    .start-0 {
+        left: 0;
+    }
+    
+    .end-0 {
+        right: 0;
+    }
+    
+    .h-100 {
+        height: 100%;
+    }
 </style>
 
 <script>
 function printSelectedQR() {
+    const currentView = document.querySelector('input[name="viewMode"]:checked').value;
+    let wasTableView = false;
+    
+    // Если мы в режиме таблицы, временно переключаемся на сетку для печати
+    if (currentView === 'table') {
+        wasTableView = true;
+        document.getElementById('gridModeContainer').style.display = 'block';
+        document.getElementById('tableModeContainer').style.display = 'none';
+        
+        // Синхронизируем выбор из таблицы в сетку
+        document.querySelectorAll('#tableModeContainer .table-checkbox:checked').forEach(checkbox => {
+            const copyId = checkbox.value;
+            const gridCheckbox = document.getElementById(`qr_${copyId}`);
+            if (gridCheckbox) gridCheckbox.checked = true;
+        });
+    }
+    
     const items = document.querySelectorAll('.qr-code-item');
     items.forEach(item => {
         const checkbox = item.querySelector('.form-check-input');
@@ -285,10 +504,48 @@ function printSelectedQR() {
     items.forEach(item => {
         item.classList.remove('hidden-print');
     });
+    
+    // Если изначально был режим таблицы, возвращаемся к нему
+    if (wasTableView) {
+        document.getElementById('gridModeContainer').style.display = 'none';
+        document.getElementById('tableModeContainer').style.display = 'block';
+    }
 }
 
+// Обновляем функцию печати всех QR-кодов
+window.addEventListener('beforeprint', function() {
+    const currentView = document.querySelector('input[name="viewMode"]:checked').value;
+    
+    // Сохраняем текущий режим отображения
+    window.originalViewMode = currentView;
+    
+    // Если мы в режиме таблицы, временно переключаемся на сетку для печати
+    if (currentView === 'table') {
+        document.getElementById('gridView').checked = true;
+        document.getElementById('gridModeContainer').style.display = 'block';
+        document.getElementById('tableModeContainer').style.display = 'none';
+    }
+});
+
+window.addEventListener('afterprint', function() {
+    // Восстанавливаем режим отображения после печати
+    if (window.originalViewMode === 'table') {
+        document.getElementById('tableView').checked = true;
+        document.getElementById('gridModeContainer').style.display = 'none';
+        document.getElementById('tableModeContainer').style.display = 'block';
+    }
+});
+
 function writeOffSelected() {
-    const checkboxes = document.querySelectorAll('.form-check-input:checked');
+    const currentView = document.querySelector('input[name="viewMode"]:checked').value;
+    let checkboxes;
+    
+    if (currentView === 'grid') {
+        checkboxes = document.querySelectorAll('#gridModeContainer .form-check-input:checked');
+    } else {
+        checkboxes = document.querySelectorAll('#tableModeContainer .form-check-input:checked');
+    }
+    
     if (checkboxes.length === 0) {
         alert('Выберите экземпляры для списания');
         return;
@@ -302,7 +559,15 @@ function writeOffSelected() {
 document.getElementById('writeOffForm').addEventListener('submit', async function(e) {
     e.preventDefault();
     
-    const checkboxes = document.querySelectorAll('.form-check-input:checked');
+    const currentView = document.querySelector('input[name="viewMode"]:checked').value;
+    let checkboxes;
+    
+    if (currentView === 'grid') {
+        checkboxes = document.querySelectorAll('#gridModeContainer .form-check-input:checked');
+    } else {
+        checkboxes = document.querySelectorAll('#tableModeContainer .form-check-input:checked');
+    }
+    
     const copyIds = Array.from(checkboxes).map(cb => cb.value);
     
     for (const copyId of copyIds) {
@@ -330,7 +595,15 @@ document.addEventListener('DOMContentLoaded', function() {
     selectAllBtn.className = 'btn btn-info me-2 no-print';
     selectAllBtn.innerHTML = '✅ Выбрать все';
     selectAllBtn.onclick = function() {
-        const checkboxes = document.querySelectorAll('.form-check-input');
+        const currentView = document.querySelector('input[name="viewMode"]:checked').value;
+        let checkboxes;
+        
+        if (currentView === 'grid') {
+            checkboxes = document.querySelectorAll('#gridModeContainer .form-check-input');
+        } else {
+            checkboxes = document.querySelectorAll('#tableModeContainer .form-check-input');
+        }
+        
         const allChecked = Array.from(checkboxes).every(cb => cb.checked);
         checkboxes.forEach(cb => cb.checked = !allChecked);
         this.innerHTML = allChecked ? '✅ Выбрать все' : '❌ Снять выбор';
@@ -344,41 +617,115 @@ document.addEventListener('DOMContentLoaded', function() {
     document.querySelectorAll('input[name="statusFilter"]').forEach(radio => {
         radio.addEventListener('change', applyFilters);
     });
+    
+    // Обработчик переключения между режимами отображения
+    document.querySelectorAll('input[name="viewMode"]').forEach(radio => {
+        radio.addEventListener('change', function() {
+            const viewMode = this.value;
+            if (viewMode === 'grid') {
+                document.getElementById('gridModeContainer').style.display = 'block';
+                document.getElementById('tableModeContainer').style.display = 'none';
+            } else {
+                document.getElementById('gridModeContainer').style.display = 'none';
+                document.getElementById('tableModeContainer').style.display = 'block';
+            }
+            applyFilters(); // Применяем фильтры для нового режима
+        });
+    });
+    
+    // Выбор всех в таблице
+    document.getElementById('selectAllTable').addEventListener('change', function() {
+        const checkboxes = document.querySelectorAll('#tableModeContainer .table-checkbox');
+        checkboxes.forEach(cb => cb.checked = this.checked);
+    });
+    
+    // Синхронизация выбора между режимами
+    function syncCheckboxes(copyId, isChecked) {
+        const gridCheckbox = document.getElementById(`qr_${copyId}`);
+        const tableCheckbox = document.getElementById(`table_qr_${copyId}`);
+        
+        if (gridCheckbox) gridCheckbox.checked = isChecked;
+        if (tableCheckbox) tableCheckbox.checked = isChecked;
+    }
+    
+    // Слушатели для синхронизации чекбоксов
+    document.querySelectorAll('.form-check-input').forEach(checkbox => {
+        checkbox.addEventListener('change', function() {
+            const copyId = this.value;
+            syncCheckboxes(copyId, this.checked);
+        });
+    });
 });
 
 function applyFilters() {
     const searchValue = document.getElementById('searchInput').value.toLowerCase().trim();
     const selectedStatus = document.querySelector('input[name="statusFilter"]:checked').value;
+    const currentView = document.querySelector('input[name="viewMode"]:checked').value;
+    
     let visibleCount = 0;
     
-    document.querySelectorAll('.qr-code-item').forEach(item => {
-        const id = item.dataset.id;
-        const status = item.dataset.status;
+    // Применяем фильтры к сетке
+    if (currentView === 'grid') {
+        document.querySelectorAll('.qr-code-item').forEach(item => {
+            const id = item.dataset.id;
+            const status = item.dataset.status;
+            
+            const matchesSearch = searchValue === '' || id.includes(searchValue);
+            const matchesStatus = selectedStatus === 'all' || status === selectedStatus;
+            
+            if (matchesSearch && matchesStatus) {
+                item.style.display = '';
+                visibleCount++;
+            } else {
+                item.style.display = 'none';
+            }
+        });
         
-        const matchesSearch = searchValue === '' || id.includes(searchValue);
-        const matchesStatus = selectedStatus === 'all' || status === selectedStatus;
+        // Показываем сообщение, если ничего не найдено
+        const container = document.getElementById('qrCodesContainer');
+        const noResultsMsg = container.querySelector('.no-results-message');
         
-        if (matchesSearch && matchesStatus) {
-            item.style.display = '';
-            visibleCount++;
-        } else {
-            item.style.display = 'none';
+        if (visibleCount === 0) {
+            if (!noResultsMsg) {
+                const message = document.createElement('div');
+                message.className = 'col-12 text-center py-5 no-results-message';
+                message.innerHTML = '<h4 class="text-muted">Ничего не найдено</h4>';
+                container.appendChild(message);
+            }
+        } else if (noResultsMsg) {
+            noResultsMsg.remove();
         }
-    });
-    
-    // Показываем сообщение, если ничего не найдено
-    const container = document.getElementById('qrCodesContainer');
-    const noResultsMsg = container.querySelector('.no-results-message');
-    
-    if (visibleCount === 0) {
-        if (!noResultsMsg) {
-            const message = document.createElement('div');
-            message.className = 'col-12 text-center py-5 no-results-message';
-            message.innerHTML = '<h4 class="text-muted">Ничего не найдено</h4>';
-            container.appendChild(message);
+    } else {
+        // Применяем фильтры к таблице
+        document.querySelectorAll('.qr-table-row').forEach(row => {
+            const id = row.dataset.id;
+            const status = row.dataset.status;
+            
+            const matchesSearch = searchValue === '' || id.includes(searchValue);
+            const matchesStatus = selectedStatus === 'all' || status === selectedStatus;
+            
+            if (matchesSearch && matchesStatus) {
+                row.style.display = '';
+                visibleCount++;
+            } else {
+                row.style.display = 'none';
+            }
+        });
+        
+        // Показываем сообщение, если ничего не найдено в таблице
+        const tableBody = document.querySelector('#tableModeContainer tbody');
+        const noResultsRow = tableBody.querySelector('.no-results-row');
+        
+        if (visibleCount === 0) {
+            if (!noResultsRow) {
+                const emptyRow = document.createElement('tr');
+                emptyRow.className = 'no-results-row';
+                emptyRow.innerHTML = '<td colspan="7" class="text-center py-4"><h4 class="text-muted">Ничего не найдено</h4></td>';
+                tableBody.appendChild(emptyRow);
+            }
+        } else if (noResultsRow) {
+            noResultsRow.remove();
         }
-    } else if (noResultsMsg) {
-        noResultsMsg.remove();
     }
 }
 

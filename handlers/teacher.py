@@ -179,20 +179,42 @@ async def view_student_books(callback: types.CallbackQuery, state: FSMContext):
         regular_books = []
         
         for title, author, borrow_date, return_date, is_textbook in books:
-            borrow = datetime.strptime(borrow_date, "%Y-%m-%d %H:%M:%S").strftime("%d.%m.%Y")
-            return_date = datetime.strptime(return_date, "%Y-%m-%d %H:%M:%S").strftime("%d.%m.%Y")
-            
-            book_info = (
-                f"📖 {title}\n"
-                f"✍️ {author}\n"
-                f"📅 Взята: {borrow}\n"
-                f"📅 Вернуть до: {return_date}\n\n"
-            )
-            
-            if is_textbook:
-                textbooks.append(book_info)
-            else:
-                regular_books.append(book_info)
+            try:
+                # Обрабатываем дату с возможными миллисекундами
+                try:
+                    borrow = datetime.strptime(borrow_date, "%Y-%m-%d %H:%M:%S").strftime("%d.%m.%Y")
+                except ValueError:
+                    # Если не получилось, пробуем формат с миллисекундами
+                    borrow = datetime.strptime(borrow_date.split(".")[0], "%Y-%m-%d %H:%M:%S").strftime("%d.%m.%Y")
+                
+                try:
+                    return_date_formatted = datetime.strptime(return_date, "%Y-%m-%d %H:%M:%S").strftime("%d.%m.%Y")
+                except ValueError:
+                    # Если не получилось, пробуем формат с миллисекундами
+                    return_date_formatted = datetime.strptime(return_date.split(".")[0], "%Y-%m-%d %H:%M:%S").strftime("%d.%m.%Y")
+                
+                book_info = (
+                    f"📖 {title}\n"
+                    f"✍️ {author}\n"
+                    f"📅 Взята: {borrow}\n"
+                    f"📅 Вернуть до: {return_date_formatted}\n\n"
+                )
+                
+                if is_textbook:
+                    textbooks.append(book_info)
+                else:
+                    regular_books.append(book_info)
+            except Exception as date_error:
+                logging.error(f"Error formatting date for book {title}: {date_error}")
+                # В случае ошибки просто выводим книгу без дат
+                book_info = (
+                    f"📖 {title}\n"
+                    f"✍️ {author}\n\n"
+                )
+                if is_textbook:
+                    textbooks.append(book_info)
+                else:
+                    regular_books.append(book_info)
         
         if regular_books:
             text += "Обычные книги:\n" + "".join(regular_books) + "\n"
@@ -542,15 +564,33 @@ async def view_debtor_books(callback: types.CallbackQuery, state: FSMContext):
         text = "📚 Просроченные книги:\n\n"
         
         for title, author, borrow_date, return_date in books:
-            borrow = datetime.strptime(borrow_date, "%Y-%m-%d %H:%M:%S").strftime("%d.%m.%Y")
-            return_date = datetime.strptime(return_date, "%Y-%m-%d %H:%M:%S").strftime("%d.%m.%Y")
-            
-            text += (
-                f"📖 {title}\n"
-                f"✍️ {author}\n"
-                f"📅 Взята: {borrow}\n"
-                f"📅 Вернуть до: {return_date}\n\n"
-            )
+            try:
+                # Обрабатываем дату с возможными миллисекундами
+                try:
+                    borrow = datetime.strptime(borrow_date, "%Y-%m-%d %H:%M:%S").strftime("%d.%m.%Y")
+                except ValueError:
+                    # Если не получилось, пробуем формат с миллисекундами
+                    borrow = datetime.strptime(borrow_date.split(".")[0], "%Y-%m-%d %H:%M:%S").strftime("%d.%m.%Y")
+                
+                try:
+                    return_date_formatted = datetime.strptime(return_date, "%Y-%m-%d %H:%M:%S").strftime("%d.%m.%Y")
+                except ValueError:
+                    # Если не получилось, пробуем формат с миллисекундами
+                    return_date_formatted = datetime.strptime(return_date.split(".")[0], "%Y-%m-%d %H:%M:%S").strftime("%d.%m.%Y")
+                
+                text += (
+                    f"📖 {title}\n"
+                    f"✍️ {author}\n"
+                    f"📅 Взята: {borrow}\n"
+                    f"📅 Вернуть до: {return_date_formatted}\n\n"
+                )
+            except Exception as date_error:
+                logging.error(f"Error formatting date for book {title}: {date_error}")
+                # В случае ошибки просто выводим книгу без дат
+                text += (
+                    f"📖 {title}\n"
+                    f"✍️ {author}\n\n"
+                )
         
         kb = InlineKeyboardBuilder()
         kb.button(text="◀️ Назад", callback_data="back_to_debtors_list")
@@ -573,4 +613,89 @@ async def prev_debtors_page(callback: types.CallbackQuery, state: FSMContext):
     data = await state.get_data()
     page = data.get('page', 0)
     await state.update_data(page=page - 1)
-    await show_debtors_page(callback.message, state) 
+    await show_debtors_page(callback.message, state)
+
+@router.callback_query(F.data.startswith("class_books_page_"))
+async def process_class_books_pagination(callback: types.CallbackQuery, state: FSMContext):
+    page = int(callback.data.split("_")[-1])
+    
+    # Получаем данные о классе из состояния
+    data = await state.get_data()
+    class_name = data.get("selected_class")
+    
+    if not class_name:
+        await callback.answer("Ошибка: класс не выбран")
+        return
+    
+    # Получаем список книг для класса с пагинацией
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            
+            # Получаем общее количество книг
+            cursor.execute("""
+                SELECT COUNT(DISTINCT bb.id)
+                FROM borrowed_books bb
+                JOIN users u ON bb.user_id = u.id
+                WHERE u.class = ? AND bb.status = 'borrowed'
+            """, (class_name,))
+            
+            total_books = cursor.fetchone()[0]
+            
+            # Получаем книги для текущей страницы
+            cursor.execute("""
+                SELECT 
+                    u.full_name,
+                    b.title,
+                    b.author,
+                    bb.borrow_date,
+                    bb.return_date,
+                    bb.id
+                FROM borrowed_books bb
+                JOIN users u ON bb.user_id = u.id
+                JOIN book_copies bc ON bb.copy_id = bc.id
+                JOIN books b ON bc.book_id = b.id
+                WHERE u.class = ? AND bb.status = 'borrowed'
+                ORDER BY u.full_name, b.title
+                LIMIT ? OFFSET ?
+            """, (class_name, BOOKS_PER_PAGE, (page - 1) * BOOKS_PER_PAGE))
+            
+            books = cursor.fetchall()
+            
+            # Формируем сообщение
+            if not books:
+                text = f"📚 Ученики класса {class_name} не взяли ни одной книги"
+            else:
+                text = f"📚 Книги учеников класса {class_name} (страница {page}):\n\n"
+                
+                for i, (student_name, title, author, borrow_date, return_date, book_id) in enumerate(books, start=1):
+                    borrow_date_str = datetime.fromisoformat(borrow_date).strftime("%d.%m.%Y")
+                    return_date_str = datetime.fromisoformat(return_date).strftime("%d.%m.%Y")
+                    
+                    text += f"{i}. {student_name}\n"
+                    text += f"   📖 {title} - {author}\n"
+                    text += f"   📅 Взята: {borrow_date_str}, вернуть до: {return_date_str}\n\n"
+            
+            # Создаем клавиатуру с пагинацией
+            kb = InlineKeyboardBuilder()
+            
+            # Добавляем кнопки пагинации
+            if page > 1:
+                kb.button(text="◀️ Назад", callback_data=f"class_books_page_{page-1}")
+            
+            if page * BOOKS_PER_PAGE < total_books:
+                kb.button(text="Вперед ▶️", callback_data=f"class_books_page_{page+1}")
+            
+            kb.button(text="🔙 Назад к классам", callback_data="back_to_classes")
+            kb.adjust(2, 1)
+            
+            await callback.message.edit_text(
+                text,
+                reply_markup=kb.as_markup()
+            )
+            
+            await callback.answer("Страница обновлена")
+            
+    except Exception as e:
+        logging.error(f"Error in process_class_books_pagination: {e}")
+        await callback.message.answer("❌ Произошла ошибка при получении списка книг") 

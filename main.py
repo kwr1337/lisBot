@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from fastapi.middleware.sessions import SessionMiddleware
+from starlette.middleware.sessions import SessionMiddleware
 from fastapi.staticfiles import StaticFiles
 from routes import router
 from database.models import init_admin_logs_table

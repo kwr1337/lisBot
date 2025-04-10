@@ -3,6 +3,37 @@
 {% block title %}Пользователи - Админ-панель библиотеки{% endblock %}
 
 {% block content %}
+<style>
+    .sort-link {
+        color: inherit !important;
+        text-decoration: none !important;
+        display: flex;
+        align-items: center;
+        justify-content: flex-start;
+        cursor: pointer;
+        width: 100%;
+    }
+    
+    .sort-link:hover {
+        color: #0d6efd !important;
+    }
+    
+    .sort-indicator {
+        margin-left: 5px;
+        font-size: 0.8em;
+        opacity: 0.3;
+    }
+    
+    .sort-indicator.active {
+        opacity: 1;
+        color: #0d6efd;
+    }
+    
+    th {
+        white-space: nowrap;
+    }
+</style>
+
 {% if debug_roles %}
 <div class="alert alert-info">
     Роли в базе: {{ debug_roles }}
@@ -70,6 +101,9 @@
                         🔍 Найти
                     </button>
                 </div>
+                <!-- Скрытые поля для сохранения параметров сортировки -->
+                <input type="hidden" name="sort" value="{{ sort }}">
+                <input type="hidden" name="order" value="{{ order }}">
             </form>
         </div>
     </div>
@@ -115,12 +149,62 @@
         <table class="table table-striped">
             <thead>
                 <tr>
-                    <th>ID</th>
-                    <th>Имя пользователя</th>
-                    <th>ФИО</th>
-                    <th>Телефон</th>
-                    <th>Роль</th>
-                    <th>Статус</th>
+                    <th>
+                        <a href="?page={{ current_page }}&search={{ filters.search }}&role={{ filters.role }}&status={{ filters.status }}&sort=id&order={% if sort == 'id' and order == 'asc' %}desc{% else %}asc{% endif %}" class="sort-link">
+                            ID
+                            <span class="sort-indicator {% if sort == 'id' %}active{% endif %}">
+                                {% if sort == 'id' and order == 'asc' %}▲{% else %}▼{% endif %}
+                            </span>
+                        </a>
+                    </th>
+                    <th>
+                        <a href="?page={{ current_page }}&search={{ filters.search }}&role={{ filters.role }}&status={{ filters.status }}&sort=username&order={% if sort == 'username' and order == 'asc' %}desc{% else %}asc{% endif %}" class="sort-link">
+                            Имя пользователя
+                            <span class="sort-indicator {% if sort == 'username' %}active{% endif %}">
+                                {% if sort == 'username' and order == 'asc' %}▲{% else %}▼{% endif %}
+                            </span>
+                        </a>
+                    </th>
+                    <th>
+                        <a href="?page={{ current_page }}&search={{ filters.search }}&role={{ filters.role }}&status={{ filters.status }}&sort=full_name&order={% if sort == 'full_name' and order == 'asc' %}desc{% else %}asc{% endif %}" class="sort-link">
+                            ФИО
+                            <span class="sort-indicator {% if sort == 'full_name' %}active{% endif %}">
+                                {% if sort == 'full_name' and order == 'asc' %}▲{% else %}▼{% endif %}
+                            </span>
+                        </a>
+                    </th>
+                    <th>
+                        <a href="?page={{ current_page }}&search={{ filters.search }}&role={{ filters.role }}&status={{ filters.status }}&sort=phone&order={% if sort == 'phone' and order == 'asc' %}desc{% else %}asc{% endif %}" class="sort-link">
+                            Телефон
+                            <span class="sort-indicator {% if sort == 'phone' %}active{% endif %}">
+                                {% if sort == 'phone' and order == 'asc' %}▲{% else %}▼{% endif %}
+                            </span>
+                        </a>
+                    </th>
+                    <th>
+                        <a href="?page={{ current_page }}&search={{ filters.search }}&role={{ filters.role }}&status={{ filters.status }}&sort=role&order={% if sort == 'role' and order == 'asc' %}desc{% else %}asc{% endif %}" class="sort-link">
+                            Роль
+                            <span class="sort-indicator {% if sort == 'role' %}active{% endif %}">
+                                {% if sort == 'role' and order == 'asc' %}▲{% else %}▼{% endif %}
+                            </span>
+                        </a>
+                    </th>
+                    <th>
+                        <a href="?page={{ current_page }}&search={{ filters.search }}&role={{ filters.role }}&status={{ filters.status }}&sort=class&order={% if sort == 'class' and order == 'asc' %}desc{% else %}asc{% endif %}" class="sort-link">
+                            Класс
+                            <span class="sort-indicator {% if sort == 'class' %}active{% endif %}">
+                                {% if sort == 'class' and order == 'asc' %}▲{% else %}▼{% endif %}
+                            </span>
+                        </a>
+                    </th>
+                    <th>
+                        <a href="?page={{ current_page }}&search={{ filters.search }}&role={{ filters.role }}&status={{ filters.status }}&sort=is_blocked&order={% if sort == 'is_blocked' and order == 'asc' %}desc{% else %}asc{% endif %}" class="sort-link">
+                            Статус
+                            <span class="sort-indicator {% if sort == 'is_blocked' %}active{% endif %}">
+                                {% if sort == 'is_blocked' and order == 'asc' %}▲{% else %}▼{% endif %}
+                            </span>
+                        </a>
+                    </th>
                     <th>Взято книг</th>
                     <th>Отзывов</th>
                     <th>Последняя активность</th>
@@ -144,6 +228,13 @@
                         {% endif %}
                     </td>
                     <td>
+                        {% if user[9] %}
+                            {{ user[9] }}
+                        {% else %}
+                            <span class="text-muted">-</span>
+                        {% endif %}
+                    </td>
+                    <td>
                         {% if user[8] == 1 %}
                             <span class="badge bg-danger">Заблокирован</span>
                         {% else %}
@@ -156,13 +247,22 @@
                     <td>
                         {% if user[4] != 'admin' %}
                         <button type="button" 
+                                class="btn btn-sm btn-primary me-1"
+                                onclick="editUser({{ user[0] }}, '{{ user[1] }}', '{{ user[2] }}', '{{ user[3] }}', '{{ user[4] }}', '{{ user[9] }}')"
+                                data-bs-toggle="tooltip" 
+                                title="Редактировать">
+                            ✏️
+                        </button>
+                        <button type="button" 
                                 class="btn btn-sm {% if user[8] == 1 %}btn-success{% else %}btn-danger{% endif %}"
                                 data-bs-toggle="modal" 
-                                data-bs-target="#blockModal{{ user[0] }}">
+                                data-bs-target="#blockModal{{ user[0] }}"
+                                data-bs-tooltip="tooltip" 
+                                title="{% if user[8] == 1 %}Разблокировать{% else %}Заблокировать{% endif %}">
                             {% if user[8] == 1 %}
-                                Разблокировать
+                                🔓
                             {% else %}
-                                Заблокировать
+                                🔒
                             {% endif %}
                         </button>
                         
@@ -211,32 +311,32 @@
     
     <!-- Пагинация -->
     {% if total_pages > 1 %}
-    <nav aria-label="Page navigation" class="mt-4">
+    <nav aria-label="Page navigation">
         <ul class="pagination justify-content-center">
             <li class="page-item {% if current_page == 1 %}disabled{% endif %}">
-                <a class="page-link" href="?page=1&search={{ filters.search }}" aria-label="First">
+                <a class="page-link" href="?page=1&search={{ filters.search }}&role={{ filters.role }}&status={{ filters.status }}&sort={{ sort }}&order={{ order }}" aria-label="First">
                     <span aria-hidden="true">««</span>
                 </a>
             </li>
             <li class="page-item {% if current_page == 1 %}disabled{% endif %}">
-                <a class="page-link" href="?page={{ current_page - 1 }}&search={{ filters.search }}" aria-label="Previous">
+                <a class="page-link" href="?page={{ current_page - 1 }}&search={{ filters.search }}&role={{ filters.role }}&status={{ filters.status }}&sort={{ sort }}&order={{ order }}" aria-label="Previous">
                     <span aria-hidden="true">«</span>
                 </a>
             </li>
             
             {% for page in range(max(1, current_page - 2), min(total_pages + 1, current_page + 3)) %}
             <li class="page-item {% if page == current_page %}active{% endif %}">
-                <a class="page-link" href="?page={{ page }}&search={{ filters.search }}">{{ page }}</a>
+                <a class="page-link" href="?page={{ page }}&search={{ filters.search }}&role={{ filters.role }}&status={{ filters.status }}&sort={{ sort }}&order={{ order }}">{{ page }}</a>
             </li>
             {% endfor %}
             
             <li class="page-item {% if current_page == total_pages %}disabled{% endif %}">
-                <a class="page-link" href="?page={{ current_page + 1 }}&search={{ filters.search }}" aria-label="Next">
+                <a class="page-link" href="?page={{ current_page + 1 }}&search={{ filters.search }}&role={{ filters.role }}&status={{ filters.status }}&sort={{ sort }}&order={{ order }}" aria-label="Next">
                     <span aria-hidden="true">»</span>
                 </a>
             </li>
             <li class="page-item {% if current_page == total_pages %}disabled{% endif %}">
-                <a class="page-link" href="?page={{ total_pages }}&search={{ filters.search }}" aria-label="Last">
+                <a class="page-link" href="?page={{ total_pages }}&search={{ filters.search }}&role={{ filters.role }}&status={{ filters.status }}&sort={{ sort }}&order={{ order }}" aria-label="Last">
                     <span aria-hidden="true">»»</span>
                 </a>
             </li>
@@ -245,7 +345,127 @@
     {% endif %}
 </div>
 
+<!-- Модальное окно редактирования пользователя -->
+<div class="modal fade" id="editUserModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Редактировать пользователя</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form id="editUserForm">
+                <div class="modal-body">
+                    <input type="hidden" id="editUserId" name="user_id">
+                    <div class="mb-3">
+                        <label class="form-label">Имя пользователя</label>
+                        <input type="text" class="form-control" id="editUsername" name="username">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">ФИО</label>
+                        <input type="text" class="form-control" id="editFullName" name="full_name">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Телефон</label>
+                        <input type="text" class="form-control" id="editPhone" name="phone">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Роль</label>
+                        <select class="form-select" id="editRole" name="role">
+                            <option value="user">Ученик</option>
+                            <option value="teacher">Учитель</option>
+                            <option value="admin">Администратор</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Класс</label>
+                        <input type="text" class="form-control" id="editClass" name="class">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                    <button type="submit" class="btn btn-primary">Сохранить</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
 <script>
+// Отладка формы фильтрации
+document.getElementById('filterForm').addEventListener('submit', function(e) {
+    console.log('Form submitted with values:', {
+        search: this.elements.search.value,
+        role: this.elements.role.value,
+        status: this.elements.status.value
+    });
+});
+
+// Функция для обработки сортировки
+function toggleSort(field) {
+    const urlParams = new URLSearchParams(window.location.search);
+    const currentSort = urlParams.get('sort') || 'id';
+    const currentOrder = urlParams.get('order') || 'desc';
+    
+    let newOrder = 'asc';
+    if (field === currentSort && currentOrder === 'asc') {
+        newOrder = 'desc';
+    }
+    
+    urlParams.set('sort', field);
+    urlParams.set('order', newOrder);
+    
+    window.location.href = '?' + urlParams.toString();
+}
+
+// Инициализация тултипов
+document.addEventListener('DOMContentLoaded', function() {
+    var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-tooltip="tooltip"]'));
+    var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+        return new bootstrap.Tooltip(tooltipTriggerEl);
+    });
+});
+
+function editUser(id, username, fullName, phone, role, className) {
+    // Заполняем форму данными пользователя
+    document.getElementById('editUserId').value = id;
+    document.getElementById('editUsername').value = username || '';
+    document.getElementById('editFullName').value = fullName || '';
+    document.getElementById('editPhone').value = phone || '';
+    document.getElementById('editRole').value = role || 'user';
+    document.getElementById('editClass').value = className || '';
+    
+    // Открываем модальное окно
+    const modal = new bootstrap.Modal(document.getElementById('editUserModal'));
+    modal.show();
+}
+
+// Обработчик отправки формы редактирования пользователя
+document.getElementById('editUserForm').addEventListener('submit', function(e) {
+    e.preventDefault();
+    
+    const userId = document.getElementById('editUserId').value;
+    const formData = new FormData(this);
+    
+    fetch(`/users/${userId}/edit`, {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => {
+        if (response.ok) {
+            showToast('Пользователь успешно обновлен', 'success');
+            setTimeout(() => location.reload(), 1500);
+        } else {
+            return response.json().then(data => {
+                throw new Error(data.error || 'Ошибка при обновлении пользователя');
+            });
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        showToast(error.message, 'error');
+    });
+});
+
 function uploadExcel(input) {
     if (!input.files || !input.files[0]) return;
     

@@ -6,7 +6,7 @@
 <div class="container mt-4">
     <!-- Сводка -->
     <div class="row mb-4">
-        <div class="col-md-4">
+        <div class="col-md-3">
             <div class="card shadow-sm">
                 <div class="card-body text-center">
                     <h5 class="card-title text-primary mb-3">
@@ -17,7 +17,7 @@
                 </div>
             </div>
         </div>
-        <div class="col-md-4">
+        <div class="col-md-3">
             <div class="card shadow-sm">
                 <div class="card-body text-center">
                     <h5 class="card-title text-success mb-3">
@@ -28,7 +28,7 @@
                 </div>
             </div>
         </div>
-        <div class="col-md-4">
+        <div class="col-md-3">
             <div class="card shadow-sm">
                 <div class="card-body text-center">
                     <h5 class="card-title text-warning mb-3">
@@ -36,6 +36,19 @@
                         Выдано
                     </h5>
                     <p class="card-text display-6 mb-0">{{ borrowed_copies }}</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card shadow-sm">
+                <div class="card-body text-center">
+                    <h5 class="card-title text-danger mb-3">
+                        <span class="fs-2">⏱️</span><br>
+                        Просрочено
+                    </h5>
+                    <a href="/overdue-books" class="text-decoration-none">
+                        <p class="card-text display-6 mb-0">{{ overdue_copies|default(0) }}</p>
+                    </a>
                 </div>
             </div>
         </div>
@@ -48,7 +61,7 @@
                 <div class="col-md-8">
                     <div class="input-group">
                         <span class="input-group-text bg-primary text-white">
-                            <i class="fas fa-search">🔍</i>
+                            <i class="fas fa-search"></i>
                         </span>
                         <input type="text" 
                                class="form-control border-primary" 
@@ -78,56 +91,93 @@
 
     <!-- Таблица книг -->
     <div class="table-responsive">
-        <table class="table table-striped">
+        <table class="table table-striped table-books">
             <thead>
                 <tr>
-                    <th>Название книги</th>
-                    <th>Автор</th>
-                    <th>Тематика(Жанр)</th>
-                    <th>Описание</th>
-                    <th>Кол-во страниц</th>
-                    <th>Номер издания</th>
-                    <th>Год издания</th>
-                    <th>Издательство</th>
-                    <th>Доступно/Всего</th>
-                    <th>Средняя цена</th>
-                    <th>Действия</th>
+                    <th class="col-id">
+                        <a href="#" class="sort-link" data-sort="id">
+                            ID <span class="sort-indicator {% if sort == 'id' %}active{% endif %}">{% if sort == "id" and order == "desc" %}▼{% else %}▲{% endif %}</span>
+                        </a>
+                    </th>
+                    <th class="col-title">
+                        <a href="#" class="sort-link" data-sort="title">
+                            Название <span class="sort-indicator {% if sort == 'title' %}active{% endif %}">{% if sort == "title" and order == "desc" %}▼{% else %}▲{% endif %}</span>
+                        </a>
+                    </th>
+                    <th class="col-author">
+                        <a href="#" class="sort-link" data-sort="author">
+                            Автор <span class="sort-indicator {% if sort == 'author' %}active{% endif %}">{% if sort == "author" and order == "desc" %}▼{% else %}▲{% endif %}</span>
+                        </a>
+                    </th>
+                    <th class="col-theme">
+                        <a href="#" class="sort-link" data-sort="theme">
+                            Тематика <span class="sort-indicator {% if sort == 'theme' %}active{% endif %}">{% if sort == "theme" and order == "desc" %}▼{% else %}▲{% endif %}</span>
+                        </a>
+                    </th>
+                    <th class="col-description">Описание</th>
+                    <th class="col-pages">
+                        <a href="#" class="sort-link" data-sort="pages">
+                            Стр. <span class="sort-indicator {% if sort == 'pages' %}active{% endif %}">{% if sort == "pages" and order == "desc" %}▼{% else %}▲{% endif %}</span>
+                        </a>
+                    </th>
+                    <th class="col-edition">
+                        <a href="#" class="sort-link" data-sort="edition_number">
+                            № <span class="sort-indicator {% if sort == 'edition_number' %}active{% endif %}">{% if sort == "edition_number" and order == "desc" %}▼{% else %}▲{% endif %}</span>
+                        </a>
+                    </th>
+                    <th class="col-year">
+                        <a href="#" class="sort-link" data-sort="publication_year">
+                            Год <span class="sort-indicator {% if sort == 'publication_year' %}active{% endif %}">{% if sort == "publication_year" and order == "desc" %}▼{% else %}▲{% endif %}</span>
+                        </a>
+                    </th>
+                    <th class="col-publisher">
+                        <a href="#" class="sort-link" data-sort="publisher">
+                            Издат. <span class="sort-indicator {% if sort == 'publisher' %}active{% endif %}">{% if sort == "publisher" and order == "desc" %}▼{% else %}▲{% endif %}</span>
+                        </a>
+                    </th>
+                    <th class="col-textbook">Уч.</th>
+                    <th class="col-copies">
+                        <a href="#" class="sort-link" data-sort="available_copies">
+                            Доступно <span class="sort-indicator {% if sort == 'available_copies' %}active{% endif %}">{% if sort == "available_copies" and order == "desc" %}▼{% else %}▲{% endif %}</span>
+                        </a>
+                    </th>
+                    <th class="col-price">Цена</th>
+                    <th class="col-actions">Действия</th>
                 </tr>
             </thead>
             <tbody>
                 {% for book in books %}
                 <tr>
+                    <td>{{ book.id }}</td>
                     <td>{{ book.title }}</td>
                     <td>{{ book.author }}</td>
                     <td>{{ book.theme or '—' }}</td>
-                    <td>{{ book.description }}</td>
+                    <td class="description-cell">{{ book.description }}</td>
                     <td>{{ book.pages }}</td>
                     <td>{{ book.edition_number or '—' }}</td>
                     <td>{{ book.publication_year }}</td>
                     <td>{{ book.publisher }}</td>
+                    <td>{% if book.is_textbook == 'Y' %}Да{% else %}Нет{% endif %}</td>
                     <td>{{ book.available_copies }}/{{ book.total_copies }}</td>
                     <td>
-                        {% if book.avg_price > 0 %}
-                            {{ book.avg_price }} ₽
+                        {% if book.avg_price and book.avg_price > 0 %}
+                            {{ "%.2f"|format(book.avg_price) }}
                         {% else %}
-                            <span class="text-muted">—</span>
+                            —
                         {% endif %}
                     </td>
                     <td>
-                        <button class="btn btn-sm btn-primary" 
-                                onclick='editBook({{ book.id }}, {{ book.title|tojson }}, {{ book.author|tojson }}, 
-                                        {{ book.description|tojson }}, {{ book.theme|tojson if book.theme else "null"|tojson }},
-                                        {{ book.pages|tojson if book.pages else "null"|tojson }}, 
-                                        {{ book.edition_number|tojson if book.edition_number else "null"|tojson }},
-                                        {{ book.publication_year|tojson if book.publication_year else "null"|tojson }},
-                                        {{ book.publisher|tojson if book.publisher else "null"|tojson }})' 
-                                data-bs-toggle="tooltip" 
-                                title="Редактировать">
-                            ✏️
-                        </button>
-                        <button class="btn btn-sm btn-danger" onclick="deleteBook({{ book.id }})" data-bs-toggle="tooltip" title="Удалить">🗑️</button>
-                        <button class="btn btn-sm btn-warning" onclick="managePurchases({{ book.id }})" data-bs-toggle="tooltip" title="Управление закупками">📦</button>
-                        <a href="/books/{{ book.id }}/qrcodes" class="btn btn-sm btn-info" data-bs-toggle="tooltip" title="QR коды">🔍</a>
+                        <div class="btn-group btn-group-sm">
+                            <button class="btn btn-sm btn-primary edit-book-btn" 
+                                    data-id="{{ book.id }}"
+                                    data-bs-toggle="tooltip" 
+                                    title="Редактировать">
+                                ✏️
+                            </button>
+                            <button class="btn btn-sm btn-danger" onclick="deleteBook({{ book.id }})" data-bs-toggle="tooltip" title="Удалить">🗑️</button>
+                            <button class="btn btn-sm btn-warning" onclick="managePurchases({{ book.id }})" data-bs-toggle="tooltip" title="Закупки">📦</button>
+                            <a href="/books/{{ book.id }}/qrcodes" class="btn btn-sm btn-info" data-bs-toggle="tooltip" title="QR">🔍</a>
+                        </div>
                     </td>
                 </tr>
                 {% endfor %}
@@ -140,29 +190,29 @@
     <nav aria-label="Page navigation" class="mt-4">
         <ul class="pagination justify-content-center">
             <li class="page-item {% if current_page == 1 %}disabled{% endif %}">
-                <a class="page-link" href="?page=1&search={{ search_query }}" aria-label="First">
+                <a class="page-link" href="?page=1&search={{ search_query }}&sort={{ sort }}&order={{ order }}" aria-label="First">
                     <span aria-hidden="true">««</span>
                 </a>
             </li>
             <li class="page-item {% if current_page == 1 %}disabled{% endif %}">
-                <a class="page-link" href="?page={{ current_page - 1 }}&search={{ search_query }}" aria-label="Previous">
+                <a class="page-link" href="?page={{ current_page - 1 }}&search={{ search_query }}&sort={{ sort }}&order={{ order }}" aria-label="Previous">
                     <span aria-hidden="true">«</span>
                 </a>
             </li>
             
             {% for page in range(max(1, current_page - 2), min(total_pages + 1, current_page + 3)) %}
             <li class="page-item {% if page == current_page %}active{% endif %}">
-                <a class="page-link" href="?page={{ page }}&search={{ search_query }}">{{ page }}</a>
+                <a class="page-link" href="?page={{ page }}&search={{ search_query }}&sort={{ sort }}&order={{ order }}">{{ page }}</a>
             </li>
             {% endfor %}
             
             <li class="page-item {% if current_page == total_pages %}disabled{% endif %}">
-                <a class="page-link" href="?page={{ current_page + 1 }}&search={{ search_query }}" aria-label="Next">
+                <a class="page-link" href="?page={{ current_page + 1 }}&search={{ search_query }}&sort={{ sort }}&order={{ order }}" aria-label="Next">
                     <span aria-hidden="true">»</span>
                 </a>
             </li>
             <li class="page-item {% if current_page == total_pages %}disabled{% endif %}">
-                <a class="page-link" href="?page={{ total_pages }}&search={{ search_query }}" aria-label="Last">
+                <a class="page-link" href="?page={{ total_pages }}&search={{ search_query }}&sort={{ sort }}&order={{ order }}" aria-label="Last">
                     <span aria-hidden="true">»»</span>
                 </a>
             </li>
@@ -176,44 +226,50 @@
     <div class="modal-dialog">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title" id="modalTitle">Добавить книгу</h5>
+                <h5 class="modal-title" id="bookModalLabel">Добавить книгу</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <form id="bookForm">
                 <div class="modal-body">
                     <input type="hidden" id="bookId">
-                    <input type="hidden" name="quantity" value="1">
                     <div class="mb-3">
-                        <label class="form-label">Название книги</label>
-                        <input type="text" class="form-control" id="title" name="title" required>
+                        <label for="bookTitle" class="form-label">Название книги*</label>
+                        <input type="text" class="form-control" id="bookTitle" name="title" required>
                     </div>
                     <div class="mb-3">
-                        <label class="form-label">Автор</label>
-                        <input type="text" class="form-control" id="author" name="author" required>
+                        <label for="bookAuthor" class="form-label">Автор*</label>
+                        <input type="text" class="form-control" id="bookAuthor" name="author" required>
                     </div>
                     <div class="mb-3">
-                        <label class="form-label">Тематика(Жанр)</label>
-                        <input type="text" class="form-control" name="theme" required>
+                        <label for="bookTheme" class="form-label">Тематика(Жанр)*</label>
+                        <input type="text" class="form-control" id="bookTheme" name="theme" required>
                     </div>
                     <div class="mb-3">
-                        <label class="form-label">Описание</label>
-                        <textarea class="form-control" id="description" name="description" required></textarea>
+                        <label for="bookDescription" class="form-label">Описание*</label>
+                        <textarea class="form-control" id="bookDescription" name="description" required></textarea>
                     </div>
                     <div class="mb-3">
-                        <label class="form-label">Количество страниц</label>
-                        <input type="number" class="form-control" name="pages" required min="1">
+                        <label for="bookPages" class="form-label">Количество страниц*</label>
+                        <input type="number" class="form-control" id="bookPages" name="pages" required min="1">
                     </div>
                     <div class="mb-3">
-                        <label class="form-label">Номер издания (если есть)</label>
-                        <input type="text" class="form-control" name="edition_number">
+                        <label for="bookEditionNumber" class="form-label">Номер издания (если есть)</label>
+                        <input type="text" class="form-control" id="bookEditionNumber" name="edition_number">
                     </div>
                     <div class="mb-3">
-                        <label class="form-label">Год издания</label>
-                        <input type="number" class="form-control" name="publication_year" required>
+                        <label for="bookPublicationYear" class="form-label">Год издания*</label>
+                        <input type="number" class="form-control" id="bookPublicationYear" name="publication_year" required>
                     </div>
                     <div class="mb-3">
-                        <label class="form-label">Издательство</label>
-                        <input type="text" class="form-control" name="publisher" required>
+                        <label for="bookPublisher" class="form-label">Издательство*</label>
+                        <input type="text" class="form-control" id="bookPublisher" name="publisher" required>
+                    </div>
+                    <div class="mb-3 form-check">
+                        <input type="checkbox" class="form-check-input" id="bookIsTextbook" name="is_textbook" value="Y">
+                        <label class="form-check-label" for="bookIsTextbook">Это учебник</label>
+                    </div>
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle"></i> Экземпляры книг добавляются только через учет закупок. После сохранения книги, вы сможете добавить закупку через кнопку "Управление закупками".
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -234,24 +290,34 @@
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
+                <div class="alert alert-info">
+                    <i class="fas fa-info-circle"></i> Добавление закупки автоматически увеличивает количество доступных экземпляров книги.
+                </div>
+                
                 <form id="addPurchaseForm" class="mb-4">
                     <div class="row">
-                        <div class="col-md-4">
+                        <div class="col-md-3">
                             <div class="mb-3">
-                                <label class="form-label">Количество экземпляров</label>
+                                <label class="form-label">Кол-во экземпляров*</label>
                                 <input type="number" class="form-control" id="quantity" name="quantity" required min="1">
                             </div>
                         </div>
-                        <div class="col-md-4">
+                        <div class="col-md-3">
                             <div class="mb-3">
-                                <label class="form-label">Стоимость за экземпляр</label>
+                                <label class="form-label">Цена за экземпляр (₽)</label>
                                 <input type="number" class="form-control" name="price" required min="0">
                             </div>
                         </div>
-                        <div class="col-md-4">
+                        <div class="col-md-3">
                             <div class="mb-3">
-                                <label class="form-label">Поставщик</label>
+                                <label class="form-label">Поставщик*</label>
                                 <input type="text" class="form-control" name="supplier" required>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="mb-3">
+                                <label class="form-label">Дата поставки</label>
+                                <input type="date" class="form-control" name="purchase_date">
                             </div>
                         </div>
                     </div>
@@ -266,12 +332,22 @@
                                 <th>Дата</th>
                                 <th>Количество</th>
                                 <th>Цена/шт</th>
+                                <th>Общая сумма</th>
                                 <th>Поставщик</th>
                             </tr>
                         </thead>
                         <tbody>
                             <!-- История закупок будет добавлена через JavaScript -->
                         </tbody>
+                        <tfoot>
+                            <tr class="fw-bold">
+                                <td>Итого:</td>
+                                <td id="totalQuantity">0</td>
+                                <td>-</td>
+                                <td id="totalPrice">0 ₽</td>
+                                <td>-</td>
+                            </tr>
+                        </tfoot>
                     </table>
                 </div>
             </div>
@@ -282,6 +358,107 @@
 <!-- Контейнер для уведомлений -->
 <div id="toast-container" class="position-fixed bottom-0 end-0 p-3" style="z-index: 11">
 </div>
+
+<style>
+/* Стиль для ссылок сортировки */
+.sort-link {
+    color: inherit; /* Наследуем цвет от родительского элемента */
+    text-decoration: none; /* Убираем подчеркивание */
+    cursor: pointer; /* Показываем курсор как для ссылки */
+    font-weight: inherit; /* Наследуем жирность от родительского элемента */
+    display: inline-flex; /* Используем inline-flex для компактности */
+    align-items: center; /* Центрируем по вертикали */
+    white-space: nowrap; /* Запрещаем перенос текста */
+}
+
+.sort-link:hover {
+    color: #0d6efd; /* При наведении показываем, что это кликабельно */
+    text-decoration: none;
+}
+
+/* Стиль для индикатора сортировки */
+.sort-indicator {
+    font-size: 0.75em; /* Делаем стрелки немного меньше */
+    margin-left: 3px; /* Уменьшаем отступ слева */
+    opacity: 0.3; /* По умолчанию стрелки немного прозрачные */
+    display: inline-block; /* Делаем строчно-блочным элементом */
+}
+
+/* Активный индикатор сортировки */
+.sort-indicator.active {
+    opacity: 1; /* Активная стрелка непрозрачная */
+    color: #0d6efd; /* Цвет активной стрелки */
+}
+
+/* Оптимизация таблицы */
+.table-books {
+    font-size: 0.85rem; /* Уменьшаем размер шрифта */
+    width: 100%;
+    table-layout: fixed; /* Фиксированный макет таблицы */
+    margin-bottom: 0; /* Убираем нижний отступ */
+}
+
+.table-books th, .table-books td {
+    padding: 0.3rem 0.5rem; /* Уменьшаем отступы в ячейках */
+    vertical-align: middle;
+    word-wrap: break-word; /* Перенос длинных слов */
+    max-width: 150px; /* Максимальная ширина ячейки */
+}
+
+/* Ширина для разных столбцов */
+.table-books .col-id {
+    width: 3%;
+}
+.table-books .col-title {
+    width: 12%;
+}
+.table-books .col-author {
+    width: 8%;
+}
+.table-books .col-theme {
+    width: 7%;
+}
+.table-books .col-description {
+    width: 12%;
+}
+.table-books .col-pages {
+    width: 4%;
+}
+.table-books .col-edition {
+    width: 3%;
+}
+.table-books .col-year {
+    width: 4%;
+}
+.table-books .col-publisher {
+    width: 6%;
+}
+.table-books .col-textbook {
+    width: 3%;
+}
+.table-books .col-copies {
+    width: 5%;
+}
+.table-books .col-price {
+    width: 4%;
+}
+.table-books .col-actions {
+    width: 10%;
+    white-space: nowrap;
+}
+
+/* Ограничение высоты для длинных описаний */
+.description-cell {
+    max-height: 70px;
+    overflow-y: auto;
+}
+
+/* Компактные кнопки действий */
+.table-books .btn-group-sm .btn {
+    padding: 0.1rem 0.3rem; /* Очень компактные кнопки */
+    font-size: 0.8rem;
+}
+</style>
 
 <script>
 // Инициализация тултипов
@@ -299,40 +476,69 @@ document.addEventListener('DOMContentLoaded', function() {
         clearTimeout(searchTimeout);
         searchTimeout = setTimeout(() => {
             const searchQuery = this.value.trim();
-            window.location.href = `?page=1&search=${encodeURIComponent(searchQuery)}`;
+            const urlParams = new URLSearchParams(window.location.search);
+            
+            // Сохраняем текущие параметры сортировки
+            const sort = urlParams.get('sort') || 'title';
+            const order = urlParams.get('order') || 'asc';
+            
+            // Обновляем URL с сохранением параметров сортировки
+            window.location.href = `?page=1&search=${encodeURIComponent(searchQuery)}&sort=${sort}&order=${order}`;
         }, 500);
     });
 
+    // Обработчик для кнопок редактирования книги
+    const editButtons = document.querySelectorAll('.edit-book-btn');
+    editButtons.forEach(button => {
+        button.addEventListener('click', function() {
+            const bookId = this.getAttribute('data-id');
+            
+            // Загружаем данные книги по AJAX
+            fetch(`/books/${bookId}/json`)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Ошибка при загрузке данных книги');
+                    }
+                    return response.json();
+                })
+                .then(book => {
+                    // Заполняем форму данными книги
+                    document.getElementById('bookId').value = book.id;
+                    document.getElementById('bookTitle').value = book.title;
+                    document.getElementById('bookAuthor').value = book.author;
+                    document.getElementById('bookTheme').value = book.theme || '';
+                    document.getElementById('bookDescription').value = book.description;
+                    document.getElementById('bookPages').value = book.pages || '';
+                    document.getElementById('bookEditionNumber').value = book.edition_number || '';
+                    document.getElementById('bookPublicationYear').value = book.publication_year || '';
+                    document.getElementById('bookPublisher').value = book.publisher || '';
+                    document.getElementById('bookIsTextbook').checked = (book.is_textbook === 'Y');
+                    
+                    // Меняем заголовок модального окна
+                    document.getElementById('bookModalLabel').textContent = 'Редактировать книгу';
+                    
+                    // Открываем модальное окно
+                    const modal = new bootstrap.Modal(document.getElementById('bookModal'));
+                    modal.show();
+                })
+                .catch(error => {
+                    console.error('Ошибка:', error);
+                    showToast('Ошибка при загрузке данных книги', 'error');
+                });
+        });
+    });
+    
     // Добавляем обработчик для кнопки "Добавить книгу"
-    const addBookBtn = document.querySelector('.btn-success');
+    const addBookBtn = document.querySelector('[data-bs-toggle="modal"][data-bs-target="#bookModal"]');
     if (addBookBtn) {
         addBookBtn.addEventListener('click', function() {
             // Очищаем форму перед открытием модального окна
             document.getElementById('bookForm').reset();
             document.getElementById('bookId').value = '';
-            document.getElementById('modalTitle').textContent = 'Добавить книгу';
-            
-            // Открываем модальное окно
-            const modal = new bootstrap.Modal(document.getElementById('bookModal'));
-            modal.show();
+            document.getElementById('bookModalLabel').textContent = 'Добавить книгу';
         });
     }
 });
-
-function editBook(id, title, author, description, theme, pages, edition_number, publication_year, publisher) {
-    const modal = new bootstrap.Modal(document.getElementById('bookModal'));
-    document.getElementById('modalTitle').textContent = 'Редактировать книгу';
-    document.getElementById('bookId').value = id;
-    document.getElementById('title').value = title;
-    document.getElementById('author').value = author;
-    document.getElementById('description').value = description || '';
-    document.querySelector('input[name="theme"]').value = theme || '';
-    document.querySelector('input[name="pages"]').value = pages || '';
-    document.querySelector('input[name="edition_number"]').value = edition_number || '';
-    document.querySelector('input[name="publication_year"]').value = publication_year || '';
-    document.querySelector('input[name="publisher"]').value = publisher || '';
-    modal.show();
-}
 
 function deleteBook(id) {
     if (confirm('Вы уверены, что хотите удалить эту книгу?')) {
@@ -360,22 +566,69 @@ function managePurchases(bookId) {
             const tbody = document.querySelector('#purchasesHistory tbody');
             tbody.innerHTML = '';
             
-            data.purchases.forEach(p => {
-                tbody.innerHTML += `
+            let totalQuantity = 0;
+            let totalPrice = 0;
+            
+            if (data.purchases && data.purchases.length > 0) {
+                data.purchases.forEach(p => {
+                    const quantity = parseInt(p.quantity) || 0;
+                    const price = parseFloat(p.price) || 0;
+                    const totalItemPrice = quantity * price;
+                    
+                    totalQuantity += quantity;
+                    totalPrice += totalItemPrice;
+                    
+                    tbody.innerHTML += `
+                        <tr>
+                            <td>${p.date}</td>
+                            <td>${quantity}</td>
+                            <td>${price.toFixed(2)} ₽</td>
+                            <td>${totalItemPrice.toFixed(2)} ₽</td>
+                            <td>${p.supplier}</td>
+                        </tr>
+                    `;
+                });
+                
+                // Обновляем итоги
+                document.getElementById('totalQuantity').textContent = totalQuantity;
+                document.getElementById('totalPrice').textContent = totalPrice.toFixed(2) + ' ₽';
+            } else {
+                tbody.innerHTML = `
                     <tr>
-                        <td>${p.date}</td>
-                        <td>${p.quantity}</td>
-                        <td>${p.price} ₽</td>
-                        <td>${p.supplier}</td>
+                        <td colspan="5" class="text-center">
+                            <div class="alert alert-warning mb-0">
+                                Для этой книги ещё не было закупок. Добавьте первую закупку, чтобы добавить экземпляры книги.
+                            </div>
+                        </td>
                     </tr>
                 `;
-            });
+                
+                // Обнуляем итоги
+                document.getElementById('totalQuantity').textContent = '0';
+                document.getElementById('totalPrice').textContent = '0 ₽';
+            }
+            
+            // Устанавливаем текущую дату в поле даты поставки
+            const today = new Date();
+            const yyyy = today.getFullYear();
+            const mm = String(today.getMonth() + 1).padStart(2, '0');
+            const dd = String(today.getDate()).padStart(2, '0');
+            document.querySelector('input[name="purchase_date"]').value = `${yyyy}-${mm}-${dd}`;
             
             // Настраиваем форму добавления закупки
             const form = document.getElementById('addPurchaseForm');
             form.onsubmit = (e) => {
                 e.preventDefault();
                 const formData = new FormData(form);
+                
+                // Преобразуем дату в нужный формат
+                let purchaseDate = formData.get('purchase_date');
+                if (purchaseDate) {
+                    const dateParts = purchaseDate.split('-');
+                    if (dateParts.length === 3) {
+                        purchaseDate = `${dateParts[2]}.${dateParts[1]}.${dateParts[0]}`;
+                    }
+                }
                 
                 fetch(`/books/${bookId}/purchases/add`, {
                     method: 'POST',
@@ -384,21 +637,38 @@ function managePurchases(bookId) {
                     },
                     body: JSON.stringify({
                         quantity: parseInt(formData.get('quantity')),
-                        price: parseInt(formData.get('price')),
-                        supplier: formData.get('supplier')
+                        price: parseFloat(formData.get('price')),
+                        supplier: formData.get('supplier'),
+                        purchase_date: purchaseDate
                     })
                 }).then(response => {
                     if (response.ok) {
                         showToast('Закупка успешно добавлена', 'success');
-                        setTimeout(() => location.reload(), 1500);
+                        const modal = bootstrap.Modal.getInstance(document.getElementById('purchasesModal'));
+                        if (modal) {
+                            modal.hide();
+                        }
+                        setTimeout(() => location.reload(), 1000);
                     } else {
-                        showToast('Ошибка при добавлении закупки', 'error');
+                        return response.json().then(errorData => {
+                            showToast(`Ошибка: ${errorData.detail || 'Не удалось добавить закупку'}`, 'error');
+                        });
                     }
+                }).catch(error => {
+                    console.error('Ошибка при добавлении закупки:', error);
+                    showToast('Произошла ошибка сети или сервера', 'error');
                 });
             };
             
+            // Добавляем заголовок с информацией
+            document.querySelector('.modal-title').textContent = `Управление закупками для книги #${bookId}`;
+            
             // Показываем модальное окно
             new bootstrap.Modal(document.getElementById('purchasesModal')).show();
+        })
+        .catch(error => {
+            console.error('Ошибка при загрузке данных о закупках:', error);
+            showToast('Ошибка при загрузке данных о закупках', 'error');
         });
 }
 
@@ -407,10 +677,13 @@ document.getElementById('bookForm').addEventListener('submit', async function(e)
     e.preventDefault();
     
     const formData = new FormData(e.target);
+    if (!formData.has('is_textbook')) {
+        formData.append('is_textbook', 'N');
+    }
     
     const bookId = document.getElementById('bookId').value;
     const url = bookId ? `/books/${bookId}/edit` : '/books/add';
-    const method = bookId ? 'PUT' : 'POST';
+    const method = 'POST';
     
     try {
         const response = await fetch(url, {
@@ -419,17 +692,29 @@ document.getElementById('bookForm').addEventListener('submit', async function(e)
         });
         
         if (response.ok) {
-            showToast(bookId ? 'Книга успешно отредактирована' : 'Книга успешно добавлена', 'success');
-            setTimeout(() => window.location.reload(), 1500);
+            const responseData = await response.json();
+            const modal = bootstrap.Modal.getInstance(document.getElementById('bookModal'));
+            if (modal) {
+                modal.hide();
+            }
+            
+            if (!bookId) {
+                // Если это новая книга, показываем модальное окно для добавления закупки
+                showToast('Книга успешно добавлена. Теперь вы можете добавить экземпляры через закупку.', 'success');
+                setTimeout(() => {
+                    managePurchases(responseData.book_id);
+                }, 1000);
+            } else {
+                showToast('Книга успешно обновлена', 'success');
+                setTimeout(() => window.location.reload(), 1500);
+            }
         } else {
-            const data = await response.json();
-            showToast(data.error || 'Ошибка при сохранении книги', 'error');
-            alert(data.error || 'Ошибка при сохранении книги');
+            const errorData = await response.json();
+            showToast(`Ошибка: ${errorData.detail || response.statusText}`, 'error');
         }
     } catch (error) {
-        console.error('Error:', error);
-        showToast('Ошибка при сохранении книги', 'error');
-        alert('Ошибка при сохранении книги');
+        console.error('Ошибка при отправке формы:', error);
+        showToast('Произошла ошибка сети или сервера', 'error');
     }
 });
 
@@ -497,5 +782,47 @@ function showToast(message, type = 'success') {
         toastElement.remove();
     });
 }
+
+// Очистка формы при закрытии модального окна
+document.getElementById('bookModal').addEventListener('hidden.bs.modal', function () {
+    document.getElementById('bookForm').reset();
+    document.getElementById('bookId').value = '';
+    document.getElementById('bookModalLabel').textContent = 'Добавить книгу';
+});
+
+// Функция для обработки сортировки
+document.addEventListener('DOMContentLoaded', function() {
+    // Получаем все ссылки сортировки
+    const sortLinks = document.querySelectorAll('.sort-link');
+    
+    // Получаем текущие параметры из URL
+    const urlParams = new URLSearchParams(window.location.search);
+    const currentSort = urlParams.get('sort') || 'title';
+    const currentOrder = urlParams.get('order') || 'asc';
+    
+    // Добавляем обработчик события для каждой ссылки
+    sortLinks.forEach(link => {
+        link.addEventListener('click', function(e) {
+            e.preventDefault();
+            
+            // Получаем параметр сортировки из атрибута data-sort
+            const sortField = this.getAttribute('data-sort');
+            
+            // Определяем направление сортировки
+            let order = 'asc';
+            if (sortField === currentSort) {
+                // Если уже сортируем по этому полю, меняем направление
+                order = currentOrder === 'asc' ? 'desc' : 'asc';
+            }
+            
+            // Обновляем параметры URL
+            urlParams.set('sort', sortField);
+            urlParams.set('order', order);
+            
+            // Обновляем URL и перезагружаем страницу
+            window.location.href = `?${urlParams.toString()}`;
+        });
+    });
+});
 </script>
 {% endblock %} 

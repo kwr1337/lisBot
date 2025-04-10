@@ -1,7 +1,7 @@
 from database.models import get_db, log_admin_action
 from datetime import datetime
 import logging
-from fastapi import APIRouter, Request, Form, HTTPException, Query
+from fastapi import APIRouter, Request, Form, HTTPException, Query, File, UploadFile
 from fastapi.responses import RedirectResponse, JSONResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
@@ -12,6 +12,8 @@ from io import BytesIO
 import openpyxl
 from openpyxl.styles import Font, Alignment, PatternFill
 from openpyxl.utils import get_column_letter
+import sqlite3
+from typing import Optional
 
 # Создаем router с префиксом
 router = APIRouter(prefix="")
@@ -27,13 +29,199 @@ def get_admin_info(request: Request) -> dict:
         'user_id': request.session.get('user_id')
     }
 
+@router.get("/school")
+async def school_profile_page(request: Request):
+    """
+    Отображает страницу с профилем школы и позволяет редактировать информацию о ней.
+    """
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            
+            # Получаем информацию о школе
+            cursor.execute("SELECT * FROM school_info LIMIT 1")
+            school_data = cursor.fetchone()
+            
+            # Если в базе еще нет данных о школе, создаем пустой словарь
+            if school_data:
+                school = dict(zip([column[0] for column in cursor.description], school_data))
+            else:
+                school = {
+                    "name": "",
+                    "type": "school",
+                    "address": "",
+                    "phone": "",
+                    "email": "",
+                    "website": "",
+                    "director": "",
+                    "description": "",
+                    "logo_url": None
+                }
+            
+            # Получаем общую статистику
+            stats = {}
+            
+            # Количество учащихся (роль "user")
+            cursor.execute("SELECT COUNT(*) FROM users WHERE role = 'user'")
+            stats["students_count"] = cursor.fetchone()[0]
+            
+            # Количество учителей (роль "teacher")
+            cursor.execute("SELECT COUNT(*) FROM users WHERE role = 'teacher'")
+            stats["teachers_count"] = cursor.fetchone()[0]
+            
+            # Общее количество книг
+            cursor.execute("SELECT COUNT(*) FROM books")
+            stats["books_count"] = cursor.fetchone()[0]
+            
+            # Количество выданных книг
+            cursor.execute("SELECT COUNT(*) FROM borrowed_books WHERE status = 'borrowed'")
+            stats["borrowed_books"] = cursor.fetchone()[0]
+            
+            return templates.TemplateResponse("school_profile.html", {
+                "request": request,
+                "school": school,
+                "stats": stats
+            })
+    except Exception as e:
+        logging.error(f"Error loading school profile page: {e}")
+        return templates.TemplateResponse("error.html", {"request": request, "error": f"Ошибка загрузки профиля школы: {str(e)}"})
+
+@router.post("/school/update-info")
+async def update_school_info(request: Request):
+    """
+    Обновляет информацию о школе.
+    """
+    try:
+        form_data = await request.form()
+        
+        # Получаем все поля из формы
+        name = form_data.get("name")
+        school_type = form_data.get("type")
+        address = form_data.get("address")
+        phone = form_data.get("phone")
+        email = form_data.get("email")
+        website = form_data.get("website")
+        director = form_data.get("director")
+        description = form_data.get("description")
+        
+        # Проверяем, что название школы указано
+        if not name:
+            return JSONResponse({"success": False, "error": "Название школы обязательно для заполнения"})
+        
+        with get_db() as conn:
+            cursor = conn.cursor()
+            
+            # Проверяем, существует ли уже запись о школе
+            cursor.execute("SELECT COUNT(*) FROM school_info")
+            exists = cursor.fetchone()[0] > 0
+            
+            if exists:
+                # Обновляем существующую запись
+                cursor.execute("""
+                    UPDATE school_info 
+                    SET name = ?, type = ?, address = ?, phone = ?, 
+                        email = ?, website = ?, director = ?, description = ?
+                    WHERE id = 1
+                """, (name, school_type, address, phone, email, website, director, description))
+            else:
+                # Создаем новую запись
+                cursor.execute("""
+                    INSERT INTO school_info 
+                    (name, type, address, phone, email, website, director, description) 
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, (name, school_type, address, phone, email, website, director, description))
+            
+            conn.commit()
+            
+            return JSONResponse({"success": True})
+    except Exception as e:
+        logging.error(f"Error updating school info: {e}")
+        return JSONResponse({"success": False, "error": str(e)})
+
+@router.post("/school/upload-logo")
+async def upload_school_logo(request: Request):
+    """
+    Загружает логотип школы.
+    """
+    try:
+        # Создаем директорию для хранения изображений, если её нет
+        upload_dir = "static/uploads/school"
+        os.makedirs(upload_dir, exist_ok=True)
+        
+        form = await request.form()
+        logo_file = form.get("logo")
+        
+        if not logo_file:
+            return JSONResponse({"success": False, "error": "Файл не выбран"})
+        
+        # Проверяем формат файла
+        if not logo_file.filename.lower().endswith(('.png', '.jpg', '.jpeg', '.gif')):
+            return JSONResponse({"success": False, "error": "Поддерживаются только изображения (PNG, JPG, JPEG, GIF)"})
+        
+        # Генерируем уникальное имя файла
+        file_extension = os.path.splitext(logo_file.filename)[1]
+        new_filename = f"school_logo_{uuid.uuid4().hex}{file_extension}"
+        file_path = os.path.join(upload_dir, new_filename)
+        
+        # Сохраняем файл
+        with open(file_path, "wb") as f:
+            content = await logo_file.read()
+            f.write(content)
+            
+        # Обновляем запись в базе данных с путем к логотипу
+        relative_path = f"/static/uploads/school/{new_filename}"
+        
+        with get_db() as conn:
+            cursor = conn.cursor()
+            
+            # Проверяем, существует ли уже запись о школе
+            cursor.execute("SELECT COUNT(*) FROM school_info")
+            exists = cursor.fetchone()[0] > 0
+            
+            if exists:
+                # Получаем старый логотип, чтобы удалить его
+                cursor.execute("SELECT logo_url FROM school_info WHERE id = 1")
+                old_logo = cursor.fetchone()
+                
+                # Обновляем путь к логотипу
+                cursor.execute("UPDATE school_info SET logo_url = ? WHERE id = 1", (relative_path,))
+            else:
+                # Создаем новую запись с логотипом
+                cursor.execute("""
+                    INSERT INTO school_info 
+                    (name, logo_url) 
+                    VALUES (?, ?)
+                """, ("Моя школа", relative_path))
+            
+            conn.commit()
+            
+            # Если был старый логотип, удаляем его
+            if exists and old_logo and old_logo[0]:
+                try:
+                    old_logo_path = old_logo[0].replace("/static", "static")
+                    if os.path.exists(old_logo_path):
+                        os.remove(old_logo_path)
+                except Exception as e:
+                    logging.error(f"Error removing old logo: {e}")
+        
+        return JSONResponse({"success": True})
+    except Exception as e:
+        logging.error(f"Error uploading school logo: {e}")
+        return JSONResponse({"success": False, "error": str(e)}) 
+
 @router.post("/books/{book_id}/edit")
 async def edit_book(
     request: Request,
     book_id: int,
     title: str = Form(...),
     author: str = Form(...),
+    theme: str = Form(...),
     description: str = Form(...),
+    pages: str = Form(...),
+    edition_number: str = Form(None),
+    publication_year: str = Form(...),
+    publisher: str = Form(...),
+    is_textbook: str = Form('N'),
     quantity: int = Form(...)
 ):
     try:
@@ -66,11 +254,12 @@ async def edit_book(
         
         cursor.execute("""
             UPDATE books 
-            SET title = ?, author = ?, description = ?, quantity = ?
+            SET title = ?, author = ?, theme = ?, description = ?, pages = ?, 
+                edition_number = ?, publication_year = ?, publisher = ?, quantity = ?, is_textbook = ?
             WHERE id = ?
-        """, (title, author, description, quantity, book_id))
+        """, (title, author, theme, description, pages, edition_number, publication_year, publisher, quantity, is_textbook, book_id))
         
-        details = f"Изменена книга: '{old_title}' -> '{title}', '{old_author}' -> '{author}'"
+        details = f"Изменена книга ID {book_id}: '{old_title}' -> '{title}', '{old_author}' -> '{author}'"
         logging.info(f"Attempting to log action with details: {details}")
         
         log_admin_action(
@@ -107,57 +296,32 @@ async def add_book(
     edition_number: str = Form(None),
     publication_year: str = Form(...),
     publisher: str = Form(...),
+    is_textbook: str = Form('N'),
     quantity: int = Form(...)
 ):
     try:
+        admin_id = request.session.get('user_id')
+        if not admin_id: return RedirectResponse(url="/login")
+        
         with get_db() as conn:
             cursor = conn.cursor()
             
-            # Проверка и добавление отсутствующих столбцов
-            cursor.execute("PRAGMA table_info(books)")
-            columns = [column[1] for column in cursor.fetchall()]
-            
-            # Добавляем недостающие столбцы
-            if 'pages' not in columns:
-                cursor.execute("ALTER TABLE books ADD COLUMN pages INTEGER")
-            if 'edition_number' not in columns:
-                cursor.execute("ALTER TABLE books ADD COLUMN edition_number TEXT")
-            if 'publication_year' not in columns:
-                cursor.execute("ALTER TABLE books ADD COLUMN publication_year INTEGER")
-            if 'publisher' not in columns:
-                cursor.execute("ALTER TABLE books ADD COLUMN publisher TEXT")
-            if 'theme' not in columns:
-                cursor.execute("ALTER TABLE books ADD COLUMN theme TEXT")
-            conn.commit()
-            
+            # Добавляем книгу
             cursor.execute("""
-                INSERT INTO books (
-                    title, author, theme, description, 
-                    pages, edition_number, publication_year, publisher, quantity
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                title, author, theme, description,
-                int(pages), edition_number, int(publication_year), publisher, quantity
-            ))
+                INSERT INTO books (title, author, theme, description, pages, edition_number, publication_year, publisher, quantity, is_textbook)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (title, author, theme, description, pages, edition_number, publication_year, publisher, quantity, is_textbook))
             
             book_id = cursor.lastrowid
-            
-            # Сначала фиксируем текущую транзакцию
             conn.commit()
             
-            admin_id = request.session.get('user_id')
-            log_admin_action(
-                admin_id=admin_id,
-                action_type="add_book",
-                book_id=book_id,
-                details=f"Added book: '{title}' by {author}"
-            )
+            log_admin_action(admin_id, "add_book", book_id=book_id, details=f"Добавлена книга: '{title}'")
             
-        return RedirectResponse(url="/books", status_code=303)
+            return RedirectResponse(url="/books", status_code=303)
+            
     except Exception as e:
         logging.error(f"Error adding book: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Ошибка при добавлении книги")
 
 @router.post("/books/{book_id}/delete")
 async def delete_book(request: Request, book_id: int):
@@ -293,6 +457,8 @@ async def logs_page(
             params.extend([items_per_page, offset])
             
             # Получаем записи
+            logging.info(f"SQL Query: {query}")
+            logging.info(f"Params: {params}")
             cursor.execute(query, params)
             
             logs = []
@@ -364,104 +530,126 @@ async def login_page(request: Request):
     )
 
 @router.get("/books")
-async def list_books(
-    request: Request,
-    search: str = Query(None),
-    page: int = Query(1, ge=1)
-):
-    if not is_admin(request):
-        return RedirectResponse(url="/login")
-        
-    admin_info = get_admin_info(request)
-    items_per_page = 10  # Количество книг на странице
-    
+async def books_page(request: Request, page: int = Query(1, ge=1), search: str = Query(""), sort: str = Query("title"), order: str = Query("asc")):
     try:
         with get_db() as conn:
             cursor = conn.cursor()
             
-            # Базовый запрос для поиска
-            search_query = f"%{search}%" if search else "%"
+            # Параметры пагинации
+            per_page = 15
+            offset = (page - 1) * per_page
             
-            # Получаем общее количество книг и статистику
-            cursor.execute("""
+            # Проверка и валидация параметров сортировки
+            valid_sort_fields = {
+                'id': 'b.id', 
+                'title': 'b.title',
+                'author': 'b.author',
+                'theme': 'b.theme',
+                'pages': 'b.pages',
+                'edition_number': 'b.edition_number',
+                'publication_year': 'b.publication_year',
+                'publisher': 'b.publisher',
+                'available_copies': "(b.quantity - COUNT(DISTINCT CASE WHEN bb.status = 'borrowed' THEN bb.copy_id END))",
+                'total_copies': 'b.quantity'
+            }
+            
+            sort_field = valid_sort_fields.get(sort, 'b.title')  # По умолчанию сортировка по названию
+            sort_order = "ASC" if order.lower() == "asc" else "DESC"
+            
+            # Базовый запрос для получения книг
+            base_query = """
                 SELECT 
-                    COUNT(DISTINCT b.id) as total_books,
-                    COUNT(DISTINCT bc.id) as total_copies,
-                    COUNT(CASE WHEN bb.status = 'borrowed' THEN 1 END) as borrowed_copies
+                    b.id, b.title, b.author, b.theme, b.description, b.pages, 
+                    b.edition_number, b.publication_year, b.publisher,
+                    b.quantity as total_copies,
+                    (b.quantity - COUNT(DISTINCT CASE WHEN bb.status = 'borrowed' THEN bb.copy_id END)) as available_copies,
+                    0 as avg_price, -- Убрали расчет средней цены из-за отсутствия таблицы purchases
+                    b.is_textbook -- Добавляем поле is_textbook
                 FROM books b
                 LEFT JOIN book_copies bc ON b.id = bc.book_id
                 LEFT JOIN borrowed_books bb ON bc.id = bb.copy_id
-                WHERE b.title LIKE ? OR b.author LIKE ?
-            """, (search_query, search_query))
+                -- LEFT JOIN purchases p ON b.id = p.book_id -- Убрали соединение
+            """
             
-            stats = cursor.fetchone()
-            total_books = stats[0]
-            total_copies = stats[1] or 0
-            borrowed_copies = stats[2] or 0
+            # Условия поиска
+            conditions = []
+            params = []
             
-            # Вычисляем пагинацию
-            total_pages = (total_books + items_per_page - 1) // items_per_page
-            offset = (page - 1) * items_per_page
+            if search:
+                conditions.append("(b.title LIKE ? OR b.author LIKE ?)")
+                search_param = f"%{search}%"
+                params.extend([search_param, search_param])
             
-            # Получаем книги для текущей страницы
-            cursor.execute("""
-                SELECT 
-                    b.id,
-                    b.title,
-                    b.author,
-                    b.description,
-                    b.theme,
-                    b.pages,
-                    b.edition_number,
-                    b.publication_year,
-                    b.publisher,
-                    COUNT(DISTINCT bc.id) as total_copies,
-                    COUNT(CASE WHEN bb.status = 'borrowed' THEN 1 END) as borrowed_copies,
-                    ROUND(AVG(COALESCE(bp.price_per_unit, 0)), 2) as avg_price
-                FROM books b
-                LEFT JOIN book_copies bc ON b.id = bc.book_id
-                LEFT JOIN borrowed_books bb ON bc.id = bb.copy_id
-                LEFT JOIN book_purchases bp ON b.id = bp.book_id
-                WHERE b.title LIKE ? OR b.author LIKE ?
-                GROUP BY b.id
-                ORDER BY b.title
+            # Добавляем условия к запросу
+            if conditions:
+                base_query += " WHERE " + " AND ".join(conditions)
+            
+            # Группировка и сортировка
+            base_query += """
+                GROUP BY b.id, b.title, b.author, b.theme, b.description, b.pages, 
+                         b.edition_number, b.publication_year, b.publisher, b.quantity, b.is_textbook -- Добавили is_textbook в GROUP BY
+                ORDER BY {sort_field} {sort_order}
                 LIMIT ? OFFSET ?
-            """, (search_query, search_query, items_per_page, offset))
+            """.format(sort_field=sort_field, sort_order=sort_order)
             
-            books = []
-            for row in cursor.fetchall():
-                books.append({
-                    'id': row[0],
-                    'title': row[1],
-                    'author': row[2],
-                    'description': row[3],
-                    'theme': row[4],
-                    'pages': row[5],
-                    'edition_number': row[6],
-                    'publication_year': row[7],
-                    'publisher': row[8],
-                    'total_copies': row[9],
-                    'available_copies': row[9] - row[10] if row[9] and row[10] is not None else 0,
-                    'avg_price': row[11]
-                })
+            # Добавляем параметры пагинации
+            params.extend([per_page, offset])
+            
+            # Выполняем запрос на получение книг
+            cursor.execute(base_query, params)
+            books_data = cursor.fetchall()
+            
+            # Преобразуем результат в список словарей
+            books = [dict(zip([column[0] for column in cursor.description], row)) for row in books_data]
+            
+            # Запрос для получения общего количества книг (с учетом фильтра)
+            count_query = "SELECT COUNT(DISTINCT b.id) FROM books b"
+            count_params = []
+            if search:
+                count_query += " WHERE (b.title LIKE ? OR b.author LIKE ?)"
+                count_params.extend([search_param, search_param])
                 
-            return templates.TemplateResponse(
-                "books.html",
-                {
-                    "request": request,
-                    "books": books,
-                    "admin_info": admin_info,
-                    "total_books": total_books,
-                    "total_copies": total_copies,
-                    "borrowed_copies": borrowed_copies,
-                    "current_page": page,
-                    "total_pages": total_pages,
-                    "search_query": search
-                }
-            )
+            cursor.execute(count_query, count_params)
+            total_books_filtered = cursor.fetchone()[0]
+            
+            # Вычисляем общее количество страниц
+            total_pages = (total_books_filtered + per_page - 1) // per_page if total_books_filtered > 0 else 1
+            
+            # Получаем общую статистику (без фильтра)
+            cursor.execute("SELECT COUNT(*) FROM books")
+            total_books_all = cursor.fetchone()[0]
+            cursor.execute("SELECT SUM(quantity) FROM books")
+            total_copies_all = cursor.fetchone()[0] or 0
+            cursor.execute("SELECT COUNT(DISTINCT copy_id) FROM borrowed_books WHERE status = 'borrowed'")
+            borrowed_copies_all = cursor.fetchone()[0] or 0
+            
+            # Получаем количество просроченных книг
+            cursor.execute("""
+                SELECT COUNT(DISTINCT bb.copy_id) 
+                FROM borrowed_books bb 
+                WHERE bb.status = 'borrowed' AND bb.return_date < date('now')
+            """)
+            overdue_copies_all = cursor.fetchone()[0] or 0
+            
+            return templates.TemplateResponse("books.html", {
+                "request": request,
+                "books": books,
+                "total_books": total_books_all,
+                "total_copies": total_copies_all,
+                "borrowed_copies": borrowed_copies_all,
+                "overdue_copies": overdue_copies_all,
+                "current_page": page,
+                "total_pages": total_pages,
+                "search_query": search,
+                "sort": sort,
+                "order": order,
+                "max": max,
+                "min": min
+            })
+            
     except Exception as e:
         logging.error(f"Error loading books page: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        return templates.TemplateResponse("error.html", {"request": request, "error": "Ошибка загрузки страницы книг"})
 
 @router.get("/suggestions")
 async def suggestions_page(request: Request):
@@ -812,177 +1000,138 @@ async def create_book(request: Request):
         logging.error(f"Error creating book: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
 
-@router.put("/books/{book_id}/edit")
-async def edit_book(
-    request: Request,
-    book_id: int,
-    title: str = Form(...),
-    author: str = Form(...),
-    theme: str = Form(...),
-    description: str = Form(...),
-    pages: str = Form(...),
-    edition_number: str = Form(None),
-    publication_year: str = Form(...),
-    publisher: str = Form(...),
-    quantity: int = Form(...)
-):
-    try:
-        with get_db() as conn:
-            cursor = conn.cursor()
-            
-            # Получаем старые значения для лога
-            cursor.execute("SELECT title, author FROM books WHERE id = ?", (book_id,))
-            old_book = cursor.fetchone()
-            old_title, old_author = old_book
-            
-            cursor.execute("""
-                UPDATE books 
-                SET title = ?, author = ?, theme = ?, description = ?,
-                    pages = ?, edition_number = ?, publication_year = ?, publisher = ?, quantity = ?
-                WHERE id = ?
-            """, (
-                title, author, theme, description,
-                int(pages), edition_number, int(publication_year), publisher, quantity,
-                book_id
-            ))
-            
-            # Фиксируем изменения
-            conn.commit()
-            
-            # Логируем действие
-            admin_id = request.session.get('user_id')
-            log_admin_action(
-                admin_id=admin_id,
-                action_type="edit_book",
-                book_id=book_id,
-                details=f"Изменена книга: '{old_title}' -> '{title}', '{old_author}' -> '{author}'"
-            )
-        
-        return RedirectResponse(url="/books", status_code=303)
-    except Exception as e:
-        logging.error(f"Error editing book: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
 @router.get("/users")
-async def users_page(request: Request, page: int = 1, search: str = ""):
-    if not is_admin(request):
-        return RedirectResponse(url="/login")
-        
-    admin_info = get_admin_info(request)
-    items_per_page = 12
-    
+async def users_page(request: Request, 
+                    page: int = Query(1, ge=1),
+                    search: str = Query(""),
+                    role: str = Query(""),
+                    status: str = Query(""),
+                    sort: str = Query("id"),
+                    order: str = Query("desc")):
+    logging.info(f"Received filter params: page={page}, search={search}, role={role}, status={status}, sort={sort}, order={order}")
     try:
         with get_db() as conn:
             cursor = conn.cursor()
             
-            # Базовый запрос для поиска
-            search_query = f"%{search}%" if search else "%"
+            # Проверка и валидация параметров сортировки
+            valid_sort_fields = {
+                'id': 'u.id',
+                'username': 'u.username',
+                'full_name': 'u.full_name',
+                'phone': 'u.phone',
+                'role': 'u.role',
+                'class': 'u.class',
+                'is_blocked': 'u.is_blocked',
+                'borrow_count': '0', # Заглушка, так как это вычисляемое поле
+                'review_count': '0'  # Заглушка, так как это вычисляемое поле
+            }
             
-            # Получаем статистику пользователей
+            sort_field = valid_sort_fields.get(sort, 'u.id')  # По умолчанию сортировка по id
+            sort_order = "ASC" if order.lower() == "asc" else "DESC"
+            
+            # Базовый запрос - максимально упрощенный
+            query = """
+                SELECT u.id, u.username, u.full_name, u.phone, u.role,
+                      0 as borrow_count,
+                      0 as review_count,
+                      '' as last_activity,
+                      u.is_blocked,
+                      u.class
+                FROM users u
+            """
+            
+            # Добавление условий фильтрации
+            conditions = []
+            params = []
+            
+            if search:
+                conditions.append("(u.username LIKE ? OR u.full_name LIKE ? OR u.id LIKE ?)")
+                search_param = f"%{search}%"
+                params.extend([search_param, search_param, search_param])
+            
+            if role:
+                conditions.append("u.role = ?")
+                params.append(role)
+            
+            if status == "active":
+                conditions.append("u.is_blocked = 0")
+            elif status == "blocked":
+                conditions.append("u.is_blocked = 1")
+            
+            if conditions:
+                query += " WHERE " + " AND ".join(conditions)
+            
+            # Добавляем сортировку и пагинацию
+            query += f"""
+                ORDER BY {sort_field} {sort_order}
+                LIMIT ? OFFSET ?
+            """
+            
+            # Добавляем параметры для пагинации
+            per_page = 20
+            offset = (page - 1) * per_page
+            params.extend([per_page, offset])
+            
+            # Выполняем запрос
+            logging.info(f"SQL Query: {query}")
+            logging.info(f"Params: {params}")
+            cursor.execute(query, params)
+            users = cursor.fetchall()
+            
+            # Получаем общее количество пользователей для пагинации
+            count_query = """
+                SELECT COUNT(DISTINCT u.id)
+                FROM users u
+            """
+            
+            if conditions:
+                count_query += " WHERE " + " AND ".join(conditions)
+            
+            cursor.execute(count_query, params[:-2])  # Исключаем параметры пагинации
+            total_users = cursor.fetchone()[0]
+            
+            # Получаем статистику
             cursor.execute("""
-                SELECT 
-                    COUNT(*) as total_users,
-                    SUM(CASE WHEN role = 'admin' THEN 1 ELSE 0 END) as admin_count,
-                    SUM(CASE WHEN role = 'teacher' THEN 1 ELSE 0 END) as teacher_count,
-                    SUM(CASE WHEN role = 'user' OR role IS NULL OR role = '' THEN 1 ELSE 0 END) as user_count
+                SELECT COUNT(*) as total,
+                       SUM(CASE WHEN role = 'admin' THEN 1 ELSE 0 END) as admins,
+                       SUM(CASE WHEN role = 'teacher' THEN 1 ELSE 0 END) as teachers,
+                       SUM(CASE WHEN role = 'user' THEN 1 ELSE 0 END) as students
                 FROM users
             """)
             stats = cursor.fetchone()
             
-            # Получаем общее количество пользователей для пагинации
-            count_query = """
-                SELECT COUNT(*)
-                FROM users u
-                WHERE 1=1
-            """
-            params = []
+            # Вычисляем количество страниц
+            if total_users > 0 and per_page > 0:
+                total_pages = (total_users + per_page - 1) // per_page
+            else:
+                total_pages = 1 # Устанавливаем 1, если пользователей нет или ошибка
             
-            if search:
-                count_query += """ 
-                    AND (
-                        u.username LIKE ? OR 
-                        u.full_name LIKE ? OR 
-                        u.phone LIKE ? OR
-                        CAST(u.id AS TEXT) LIKE ?
-                    )
-                """
-                search_param = f"%{search}%"
-                params.extend([search_param, search_param, search_param, search_param])
+            # Явно передаем встроенные функции в шаблон
+            template_context = {
+                "request": request,
+                "users": users,
+                "stats": stats,
+                "current_page": page,
+                "total_pages": total_pages,
+                "filters": {
+                    "search": search,
+                    "role": role,
+                    "status": status
+                },
+                "sort": sort,
+                "order": order,
+                "max": max, # Передаем функцию max
+                "min": min  # Передаем функцию min
+            }
             
-            cursor.execute(count_query, params)
-            total_records = cursor.fetchone()[0]
-            
-            # Вычисляем пагинацию
-            total_pages = (total_records + items_per_page - 1) // items_per_page
-            page = max(1, min(page, total_pages)) if total_pages > 0 else 1
-            offset = (page - 1) * items_per_page
-            
-            # Базовый запрос с форматированием даты и времени
-            query = """
-                SELECT 
-                    u.id,
-                    u.username,
-                    u.full_name,
-                    u.phone,
-                    u.role,
-                    COUNT(DISTINCT CASE WHEN bb.status = 'borrowed' THEN bb.id END) as active_borrows,
-                    COUNT(DISTINCT CASE WHEN br.id IS NOT NULL THEN br.id END) as review_count,
-                    strftime('%d.%m.%Y %H:%M', MAX(bb.borrow_date)) as last_activity,
-                    u.is_blocked
-                FROM users u
-                LEFT JOIN borrowed_books bb ON u.id = bb.user_id
-                LEFT JOIN book_reviews br ON u.id = br.user_id
-                WHERE 1=1
-            """
-            params = []
-            
-            # Добавляем условия поиска
-            if search:
-                query += """ 
-                    AND (
-                        u.username LIKE ? OR 
-                        u.full_name LIKE ? OR 
-                        u.phone LIKE ? OR
-                        CAST(u.id AS TEXT) LIKE ?
-                    )
-                """
-                search_param = f"%{search}%"
-                params.extend([search_param, search_param, search_param, search_param])
-            
-            # Добавляем группировку и сортировку
-            query += """
-                GROUP BY u.id, u.username, u.full_name, u.phone, u.role, u.is_blocked
-                ORDER BY u.id DESC
-                LIMIT ? OFFSET ?
-            """
-            params.extend([items_per_page, offset])
-            
-            cursor.execute(query, params)
-            users = cursor.fetchall()
-            
-            return templates.TemplateResponse(
-                "users.html",
-                {
-                    "request": request,
-                    "admin_info": admin_info,
-                    "stats": stats,
-                    "users": users,
-                    "filters": {
-                        "search": search,
-                        "role": "",
-                        "status": ""
-                    },
-                    "current_page": page,
-                    "total_pages": total_pages,
-                    "filter_query": "",
-                    "max": max,
-                    "min": min
-                }
-            )
+            return templates.TemplateResponse("users.html", template_context)
             
     except Exception as e:
-        logging.error(f"Error loading users: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logging.error(f"Error in users_page: {e}")
+        return templates.TemplateResponse("error.html", {
+            "request": request,
+            "error": "Произошла ошибка при загрузке страницы пользователей"
+        })
 
 @router.post("/users/{user_id}/toggle_block")
 async def toggle_user_block(request: Request, user_id: int, reason: str = Form(...)):
@@ -1216,7 +1365,7 @@ async def book_qrcodes_page(request: Request, book_id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/admin/books/template/download")
-async def download_books_template(request: Request):
+async def download_excel_template(request: Request):
     if not is_admin(request):
         return RedirectResponse(url="/login")
     
@@ -1229,7 +1378,8 @@ async def download_books_template(request: Request):
     headers = [
         "Название книги*", "Автор*", "Тематика(Жанр)*", "Описание*",
         "Кол-во страниц*", "Номер издания (если есть)", "Год издания*", "Издательство*",
-        "Дата поставки*", "Количество экземпляров*", "Цена за экземпляр*", "Поставщик*"
+        "Дата поставки*", "Количество экземпляров*", "Цена за экземпляр*", "Поставщик*",
+        "Учебник(Y или N)"
     ]
     
     # Заполняем заголовки
@@ -1243,14 +1393,13 @@ async def download_books_template(request: Request):
         ws.column_dimensions[col_letter].width = 20
     
     # Добавляем пример данных
-    example_data = [
+    example_row = [
         "Война и мир", "Лев Толстой", "Классика", "Роман-эпопея о событиях 1812 года",
         "1300", "1", "1869", "Русский вестник", 
-        datetime.now().strftime("%d.%m.%Y"), "30", "1000", "Книжный дом"
+        datetime.now().strftime("%d.%m.%Y"), "30", "1000", "Книжный дом",
+        "N"
     ]
-    
-    for col_num, value in enumerate(example_data, 1):
-        ws[f"{get_column_letter(col_num)}2"] = value
+    ws.append(example_row)
     
     # Сохраняем в буфер
     buffer = BytesIO()
@@ -1258,135 +1407,206 @@ async def download_books_template(request: Request):
     buffer.seek(0)
     
     # Возвращаем файл
+    response_headers = {
+        "Content-Disposition": "attachment; filename=books_template.xlsx"
+    }
     return StreamingResponse(
         buffer, 
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=books_template.xlsx"}
+        headers=response_headers
     )
 
 @router.post("/admin/books/upload")
-async def upload_books_excel(request: Request):
+async def upload_excel(request: Request, file: UploadFile = File(...)):
     if not is_admin(request):
         return JSONResponse({"error": "Unauthorized"}, status_code=401)
     
     try:
-        # Получаем файл из запроса
-        form = await request.form()
-        file = form.get("file")
-        if not file:
-            return JSONResponse({"error": "Файл не найден"}, status_code=400)
-        
-        # Читаем Excel файл
         contents = await file.read()
         wb = openpyxl.load_workbook(BytesIO(contents), data_only=True)
         ws = wb.active
-        
+
         # Проверяем заголовки
-        headers = [cell.value for cell in next(ws.rows)]
-        required_headers = ["Название книги*", "Автор*", "Тематика(Жанр)*", "Описание*", 
-                          "Кол-во страниц*", "Год издания*", "Издательство*"]
-        
-        for header in required_headers:
-            if header not in headers:
-                return JSONResponse({"error": f"Отсутствует обязательный столбец: {header}"}, status_code=400)
-        
-        # Индексы столбцов
-        title_idx = headers.index("Название книги*")
-        author_idx = headers.index("Автор*")
-        theme_idx = headers.index("Тематика(Жанр)*")
-        desc_idx = headers.index("Описание*")
-        pages_idx = headers.index("Кол-во страниц*")
-        edition_idx = headers.index("Номер издания (если есть)") if "Номер издания (если есть)" in headers else None
-        year_idx = headers.index("Год издания*")
-        publisher_idx = headers.index("Издательство*")
-        date_idx = headers.index("Дата поставки*")
-        quantity_idx = headers.index("Количество экземпляров*")
-        price_idx = headers.index("Цена за экземпляр*")
-        supplier_idx = headers.index("Поставщик*")
-        
+        headers = [cell.value for cell in ws[1]] # Получаем заголовки из первой строки
+        required_book_headers = ["Название книги*", "Автор*", "Тематика(Жанр)*", "Описание*",
+                                 "Кол-во страниц*", "Год издания*", "Издательство*", "Учебник(Y или N)"]
+        required_purchase_headers = ["Дата поставки*", "Количество экземпляров*", "Цена за экземпляр*", "Поставщик*"]
+        required_headers = required_book_headers + required_purchase_headers
+
+        missing_headers = [header for header in required_headers if header not in headers]
+        if missing_headers:
+            return JSONResponse({"error": f"Отсутствуют обязательные столбцы: {', '.join(missing_headers)}"}, status_code=400)
+
+        # Находим индексы столбцов
+        header_indices = {header: headers.index(header) for header in headers}
+
         with get_db() as conn:
             cursor = conn.cursor()
-            added_count = 0
-            
-            # Начиная со второй строки (после заголовков)
-            for i, row in enumerate(list(ws.rows)[1:], 2):
-                if all(cell.value is None for cell in row):
-                    continue  # Пропускаем пустые строки
-                
+            processed_books = 0
+            added_purchases = 0
+            skipped_rows = 0
+
+            logging.info("Начало обработки Excel файла для загрузки книг и закупок.")
+
+            for i, row_cells in enumerate(ws.iter_rows(min_row=2), 2): # Начинаем со второй строки
+                row_values = [cell.value for cell in row_cells]
+                logging.info(f"--- Обработка строки {i} ---")
+
+                # Пропускаем полностью пустые строки
+                if all(value is None for value in row_values):
+                    logging.info(f"Строка {i}: Пропущена (пустая).")
+                    skipped_rows += 1
+                    continue
+
+                book_id = None
                 try:
-                    # Извлекаем данные
-                    title = row[title_idx].value
-                    author = row[author_idx].value
-                    theme = row[theme_idx].value
-                    description = row[desc_idx].value
-                    pages = int(row[pages_idx].value or 0)
-                    edition_number = row[edition_idx].value if edition_idx is not None else None
-                    publication_year = int(row[year_idx].value or 0)
-                    publisher = row[publisher_idx].value
-                    quantity = int(row[quantity_idx].value or 0)
-                    price = int(row[price_idx].value or 0)
-                    supplier = row[supplier_idx].value
-                    
-                    # Проверяем обязательные поля
-                    if not (title and author and theme and description and pages and publication_year and publisher and quantity):
-                        continue
-                    
-                    # Добавляем книгу
-                    cursor.execute("""
-                        INSERT INTO books (
-                            title, author, theme, description, 
-                            pages, edition_number, publication_year, publisher, quantity
-                        )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (
-                        title, author, theme, description,
-                        pages, edition_number, publication_year, publisher, quantity
-                    ))
-                    
-                    book_id = cursor.lastrowid
-                    
-                    # Добавляем закупку
-                    date_str = row[date_idx].value
-                    if isinstance(date_str, datetime):
-                        date_str = date_str.strftime("%Y-%m-%d")
-                    elif isinstance(date_str, str):
-                        # Преобразуем строку даты в формате ДД.ММ.ГГГГ в ГГГГ-ММ-ДД
+                    # --- Извлекаем и проверяем данные для КНИГИ ---
+                    title = row_values[header_indices["Название книги*"]]
+                    author = row_values[header_indices["Автор*"]]
+                    theme = row_values[header_indices["Тематика(Жанр)*"]]
+                    description = row_values[header_indices["Описание*"]]
+                    publisher = row_values[header_indices["Издательство*"]]
+
+                    # Обработка числовых полей книги с проверкой
+                    try: pages = int(row_values[header_indices["Кол-во страниц*"]]) if row_values[header_indices["Кол-во страниц*"]] is not None else 0
+                    except (ValueError, TypeError): pages = 0; logging.warning(f"Строка {i}: Некорректное 'Кол-во страниц'.")
+
+                    try: publication_year = int(row_values[header_indices["Год издания*"]]) if row_values[header_indices["Год издания*"]] is not None else None
+                    except (ValueError, TypeError): publication_year = None; logging.warning(f"Строка {i}: Некорректный 'Год издания'.")
+
+                    edition_number = row_values[header_indices.get("Номер издания (если есть)")] # Необязательный столбец
+                    is_textbook = str(row_values[header_indices["Учебник(Y или N)"]]).upper() if row_values[header_indices["Учебник(Y или N)"]] else 'N'
+                    if is_textbook not in ['Y', 'N']: is_textbook = 'N'
+
+                    # --- Извлекаем и проверяем данные для ЗАКУПКИ ---
+                    supplier_raw = row_values[header_indices["Поставщик*"]]
+                    purchase_quantity_raw = row_values[header_indices["Количество экземпляров*"]]
+                    price_per_unit_raw = row_values[header_indices["Цена за экземпляр*"]]
+                    purchase_date_raw = row_values[header_indices["Дата поставки*"]]
+
+                    logging.info(f"Строка {i}: Сырые данные закупки - Дата: '{purchase_date_raw}' ({type(purchase_date_raw)}), Кол-во: '{purchase_quantity_raw}', Цена: '{price_per_unit_raw}', Поставщик: '{supplier_raw}'")
+
+                    supplier = supplier_raw # Предполагаем, что поставщик - строка
+                    # Обработка числовых полей закупки с проверкой
+                    try: purchase_quantity = int(purchase_quantity_raw) if purchase_quantity_raw is not None else 0
+                    except (ValueError, TypeError): purchase_quantity = 0; logging.warning(f"Строка {i}: Некорректное 'Количество экземпляров'. Установлено 0.")
+
+                    try: price_per_unit = float(price_per_unit_raw) if price_per_unit_raw is not None else 0.0
+                    except (ValueError, TypeError): price_per_unit = 0.0; logging.warning(f"Строка {i}: Некорректная 'Цена за экземпляр'. Установлено 0.0.")
+
+                    # Обработка даты поставки
+                    purchase_date_iso = None
+                    if isinstance(purchase_date_raw, datetime):
+                        purchase_date_iso = purchase_date_raw.strftime('%Y-%m-%d')
+                    elif isinstance(purchase_date_raw, str):
                         try:
-                            if '.' in date_str:
-                                day, month, year = date_str.split('.')
-                                date_str = f"{year}-{month}-{day}"
-                        except:
-                            # Если не удалось преобразовать, оставляем как есть
-                            pass
-                    
-                    cursor.execute("""
-                        INSERT INTO book_purchases (
-                            book_id, purchase_date, quantity, price_per_unit, supplier
-                        )
-                        VALUES (?, ?, ?, ?, ?)
-                    """, (
-                        book_id, date_str, quantity, price, supplier
-                    ))
-                    
-                    # Создаем записи для копий книг
-                    for copy_number in range(1, quantity + 1):
+                            dt_obj = datetime.strptime(purchase_date_raw, '%d.%m.%Y')
+                            purchase_date_iso = dt_obj.strftime('%Y-%m-%d')
+                        except ValueError:
+                            try:
+                                dt_obj = datetime.strptime(purchase_date_raw, '%Y-%m-%d')
+                                purchase_date_iso = dt_obj.strftime('%Y-%m-%d')
+                            except ValueError:
+                                logging.warning(f"Строка {i}: Не удалось распознать формат 'Дата поставки': {purchase_date_raw}.")
+                                purchase_date_iso = None # Явно ставим None
+                    else:
+                         logging.warning(f"Строка {i}: Некорректный тип данных для 'Дата поставки': {type(purchase_date_raw)}.")
+                         purchase_date_iso = None # Явно ставим None
+
+                    logging.info(f"Строка {i}: Обработанные данные закупки - Дата ISO: '{purchase_date_iso}', Кол-во: {purchase_quantity}, Цена: {price_per_unit}, Поставщик: '{supplier}'")
+
+                    # --- Проверка обязательных полей ---
+                    # Проверяем основные поля книги
+                    if not all([title, author, theme, description, pages is not None, publication_year is not None, publisher]):
+                        logging.warning(f"Строка {i}: Пропущены обязательные поля для книги. Строка пропущена.")
+                        skipped_rows += 1
+                        continue
+                    # Проверяем основные поля закупки
+                    purchase_data_valid = purchase_date_iso is not None and supplier and purchase_quantity > 0 and price_per_unit >= 0
+                    logging.info(f"Строка {i}: Проверка данных закупки (Дата ЕСТЬ? {purchase_date_iso is not None}, Поставщик ЕСТЬ? {bool(supplier)}, Кол-во > 0? {purchase_quantity > 0}, Цена >= 0? {price_per_unit >= 0}) -> Результат: {purchase_data_valid}")
+                    if not purchase_data_valid:
+                         logging.warning(f"Строка {i}: Не все обязательные поля закупки корректны. Закупка для этой строки не будет добавлена.")
+                         # Книга все еще может быть добавлена/обновлена ниже
+
+                    # --- Добавление/Обновление КНИГИ ---
+                    # Сначала ищем книгу по названию и автору (можно добавить другие критерии)
+                    cursor.execute("SELECT id, quantity FROM books WHERE title = ? AND author = ?", (title, author))
+                    existing_book = cursor.fetchone()
+
+                    if existing_book:
+                        book_id = existing_book[0]
+                        current_quantity = existing_book[1]
+                        # Обновляем книгу (можно добавить обновление других полей при необходимости)
+                        # Важно: Обновляем общее количество книги, добавляя количество из текущей закупки
+                        new_total_quantity = current_quantity + purchase_quantity
                         cursor.execute("""
-                            INSERT INTO book_copies (book_id, copy_number, status)
-                            VALUES (?, ?, 'available')
-                        """, (book_id, copy_number))
-                    
-                    # Фиксируем изменения
-                    conn.commit()
-                    added_count += 1
-                    
-                except Exception as e:
-                    logging.error(f"Error processing row {i}: {e}")
-            
-            return JSONResponse({"success": True, "added": added_count})
-        
+                            UPDATE books SET
+                            theme = ?, description = ?, pages = ?, edition_number = ?,
+                            publication_year = ?, publisher = ?, quantity = ?, is_textbook = ?
+                            WHERE id = ?
+                        """, (theme, description, pages, edition_number, publication_year, publisher,
+                              new_total_quantity, is_textbook, book_id))
+                        logging.info(f"Строка {i}: Книга ID {book_id} ('{title}') обновлена. Количество: {current_quantity} -> {new_total_quantity}.")
+                    else:
+                        # Добавляем новую книгу. Начальное количество равно количеству из этой закупки.
+                        cursor.execute("""
+                            INSERT INTO books (
+                                title, author, theme, description, pages, edition_number,
+                                publication_year, publisher, quantity, is_textbook
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (title, author, theme, description, pages, edition_number,
+                              publication_year, publisher, purchase_quantity, is_textbook))
+                        book_id = cursor.lastrowid
+                        logging.info(f"Строка {i}: Добавлена новая книга ID {book_id} ('{title}') с количеством {purchase_quantity}.")
+
+                    processed_books += 1 # Считаем обработанные книги (добавленные или обновленные)
+
+                    # --- Добавление ЗАКУПКИ (если есть book_id и корректные данные закупки) ---
+                    logging.info(f"Строка {i}: Проверка условий для добавления закупки (book_id ЕСТЬ? {bool(book_id)}, Данные закупки валидны? {purchase_data_valid})")
+                    if book_id and purchase_data_valid:
+                        try:
+                            logging.info(f"Строка {i}: Попытка добавить закупку: book_id={book_id}, date='{purchase_date_iso}', quantity={purchase_quantity}, price={price_per_unit}, supplier='{supplier}'")
+                            cursor.execute("""
+                                INSERT INTO book_purchases (book_id, purchase_date, quantity, price_per_unit, supplier)
+                                VALUES (?, ?, ?, ?, ?)
+                            """, (book_id, purchase_date_iso, purchase_quantity, price_per_unit, supplier))
+                            
+                            # Получаем текущее количество копий для этой книги
+                            cursor.execute("SELECT COUNT(*) FROM book_copies WHERE book_id = ?", (book_id,))
+                            current_copies = cursor.fetchone()[0]
+                            
+                            # Создаем новые копии книги
+                            for i in range(purchase_quantity):
+                                copy_number = current_copies + i + 1
+                                cursor.execute("""
+                                    INSERT INTO book_copies (book_id, copy_number, status)
+                                    VALUES (?, ?, 'available')
+                                """, (book_id, copy_number))
+                                
+                            added_purchases += 1
+                            logging.info(f"Строка {i}: УСПЕШНО добавлена закупка для книги ID {book_id}.")
+                        except sqlite3.Error as purchase_err:
+                             logging.error(f"Строка {i}: ОШИБКА SQLite при добавлении закупки для книги ID {book_id}: {purchase_err}")
+                    else:
+                         logging.warning(f"Строка {i}: Условия для добавления закупки НЕ выполнены (book_id: {book_id}, purchase_data_valid: {purchase_data_valid}). Закупка пропущена.")
+
+
+                except Exception as row_error:
+                    logging.error(f"Строка {i}: Общая ошибка обработки строки: {row_error}")
+                    skipped_rows += 1
+
+            # Фиксируем все успешные изменения в конце
+            conn.commit()
+            logging.info("Обработка Excel файла завершена.")
+
+        return JSONResponse({
+            "message": f"Файл успешно загружен. Обработано книг (добавлено/обновлено): {processed_books}. Добавлено закупок: {added_purchases}. Пропущено строк: {skipped_rows}."
+        })
+
     except Exception as e:
-        logging.error(f"Error uploading Excel file: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        logging.error(f"Критическая ошибка при загрузке Excel файла: {e}")
+        logging.exception("Полная трассировка ошибки:") # Логируем полную трассировку
+        return JSONResponse({"error": f"Внутренняя ошибка сервера при обработке файла: {e}"}, status_code=500)
 
 @router.get("/admin/users/template/download")
 async def download_users_template(request: Request):
@@ -1521,4 +1741,406 @@ async def upload_users_excel(request: Request):
         
     except Exception as e:
         logging.error(f"Error uploading Excel file: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500) 
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@router.post("/users/{user_id}/edit")
+async def edit_user(user_id: int, request: Request):
+    try:
+        # Проверка аутентификации и прав администратора
+        # Здесь должна быть проверка прав доступа
+        # В FastAPI это обычно делается через Depends
+        
+        # Получаем данные из формы
+        form_data = await request.form()
+        username = form_data.get('username')
+        full_name = form_data.get('full_name')
+        phone = form_data.get('phone')
+        role = form_data.get('role')
+        class_name = form_data.get('class')
+        
+        # Проверяем, существует ли пользователь
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id FROM users WHERE id = ?", (user_id,))
+            if not cursor.fetchone():
+                return JSONResponse({"error": "Пользователь не найден"}, status_code=404)
+            
+            # Обновляем данные пользователя
+            cursor.execute("""
+                UPDATE users 
+                SET username = ?, full_name = ?, phone = ?, role = ?, class = ?
+                WHERE id = ?
+            """, (username, full_name, phone, role, class_name, user_id))
+            
+            conn.commit()
+            
+            # Логируем действие
+            log_admin_action(
+                admin_id=1,  # Временно используем ID 1 для администратора
+                action_type="edit_user",
+                details=f"Отредактирован пользователь ID: {user_id}"
+            )
+            
+            return JSONResponse({"success": True})
+            
+    except Exception as e:
+        logging.error(f"Error editing user: {e}")
+        return JSONResponse({"error": "Произошла ошибка при редактировании пользователя"}, status_code=500)
+
+@router.get("/books/{book_id}/json")
+async def get_book_json(request: Request, book_id: int):
+    try:
+        if not is_admin(request):
+            raise HTTPException(status_code=403, detail="Доступ запрещен")
+            
+        with get_db() as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT * FROM books WHERE id = ?
+            """, (book_id,))
+            
+            book_data = cursor.fetchone()
+            
+            if not book_data:
+                raise HTTPException(status_code=404, detail="Книга не найдена")
+            
+            # Преобразуем в словарь
+            book = dict(zip([column[0] for column in cursor.description], book_data))
+            
+            return book
+    except Exception as e:
+        logging.error(f"Error getting book JSON: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/overdue-books")
+async def overdue_books_page(
+    request: Request, 
+    page: int = Query(1, ge=1), 
+    search: str = Query(""), 
+    class_filter: str = Query("", alias="class"),
+    days_filter: Optional[str] = Query("", alias="days")
+):
+    """
+    Страница со списком просроченных книг.
+    Поддерживает фильтрацию по поисковому запросу, классу и количеству дней просрочки.
+    """
+    try:
+        if not is_admin(request):
+            return RedirectResponse(url="/login", status_code=302)
+            
+        with get_db() as conn:
+            cursor = conn.cursor()
+            
+            # Параметры пагинации
+            per_page = 15
+            offset = (page - 1) * per_page
+            
+            # Базовый SQL запрос
+            base_query = """
+                SELECT
+                    b.title,
+                    b.author,
+                    u.full_name as student_name,
+                    u.class,
+                    u.id as user_id,
+                    bb.id as borrowed_id,
+                    bb.borrow_date,
+                    bb.return_date,
+                    CAST(julianday(date('now')) - julianday(date(bb.return_date)) AS INTEGER) as days_overdue
+                FROM
+                    borrowed_books bb
+                JOIN 
+                    book_copies bc ON bb.copy_id = bc.id
+                JOIN 
+                    books b ON bc.book_id = b.id
+                JOIN 
+                    users u ON bb.user_id = u.id
+                WHERE
+                    bb.status = 'borrowed'
+                    AND bb.return_date < date('now')
+            """
+            
+            # Подготовка условий фильтрации
+            conditions = []
+            params = []
+            
+            if search:
+                conditions.append("(b.title LIKE ? OR b.author LIKE ? OR u.full_name LIKE ?)")
+                search_param = f"%{search}%"
+                params.extend([search_param, search_param, search_param])
+            
+            if class_filter:
+                conditions.append("u.class = ?")
+                params.append(class_filter)
+            
+            # Проверяем, что days_filter - это число
+            if days_filter and days_filter.isdigit():
+                conditions.append("(julianday(date('now')) - julianday(date(bb.return_date))) >= ?")
+                params.append(int(days_filter))
+            
+            # Добавляем условия фильтрации
+            if conditions:
+                base_query += " AND " + " AND ".join(conditions)
+            
+            # Добавляем сортировку по дням просрочки (убывание)
+            base_query += " ORDER BY days_overdue DESC"
+            
+            # Запрос для подсчета общего количества
+            count_query = f"""
+                SELECT
+                    COUNT(*)
+                FROM
+                    borrowed_books bb
+                JOIN 
+                    book_copies bc ON bb.copy_id = bc.id
+                JOIN 
+                    books b ON bc.book_id = b.id
+                JOIN 
+                    users u ON bb.user_id = u.id
+                WHERE
+                    bb.status = 'borrowed'
+                    AND bb.return_date < date('now')
+            """
+            
+            if conditions:
+                count_query += " AND " + " AND ".join(conditions)
+            
+            # Выполняем запрос на получение общего количества
+            cursor.execute(count_query, params)
+            total_overdue = cursor.fetchone()[0]
+            
+            # Добавляем LIMIT и OFFSET для пагинации
+            base_query += " LIMIT ? OFFSET ?"
+            params.extend([per_page, offset])
+            
+            # Выполняем запрос на получение данных
+            cursor.execute(base_query, params)
+            overdue_data = cursor.fetchall()
+            
+            # Преобразуем в список словарей
+            overdue_books = [dict(zip([column[0] for column in cursor.description], row)) for row in overdue_data]
+            
+            # Форматируем даты для отображения
+            for book in overdue_books:
+                book['borrow_date'] = datetime.fromisoformat(book['borrow_date']).strftime("%d.%m.%Y")
+                book['return_date'] = datetime.fromisoformat(book['return_date']).strftime("%d.%m.%Y")
+            
+            # Получаем список классов для фильтра
+            cursor.execute("SELECT DISTINCT class FROM users WHERE class IS NOT NULL AND class != '' ORDER BY class")
+            classes = [row[0] for row in cursor.fetchall()]
+            
+            # Вычисляем общее количество страниц
+            total_pages = (total_overdue + per_page - 1) // per_page if total_overdue > 0 else 1
+            
+            return templates.TemplateResponse("overdue_books.html", {
+                "request": request,
+                "overdue_books": overdue_books,
+                "total_overdue": total_overdue,
+                "current_page": page,
+                "total_pages": total_pages,
+                "search_query": search,
+                "class_filter": class_filter,
+                "days_filter": days_filter,
+                "classes": classes,
+                "max": max,
+                "min": min
+            })
+            
+    except Exception as e:
+        logging.error(f"Error loading overdue books page: {e}")
+        return templates.TemplateResponse("error.html", {"request": request, "error": f"Ошибка загрузки страницы просроченных книг: {e}"})
+
+# Маршрут для отметки книги как возвращенной
+@router.post("/borrowed-books/{borrowed_id}/return")
+async def return_book(request: Request, borrowed_id: int):
+    try:
+        if not is_admin(request):
+            raise HTTPException(status_code=403, detail="Доступ запрещен")
+            
+        with get_db() as conn:
+            cursor = conn.cursor()
+            
+            # Проверяем существование записи о выдаче
+            cursor.execute("SELECT copy_id FROM borrowed_books WHERE id = ? AND status = 'borrowed'", (borrowed_id,))
+            result = cursor.fetchone()
+            
+            if not result:
+                raise HTTPException(status_code=404, detail="Запись о выдаче не найдена или книга уже возвращена")
+            
+            # Обновляем статус книги
+            cursor.execute("""
+                UPDATE borrowed_books
+                SET status = 'returned', actual_return_date = date('now')
+                WHERE id = ?
+            """, (borrowed_id,))
+            
+            conn.commit()
+            
+            return {"success": True, "message": "Книга успешно отмечена как возвращенная"}
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error returning book: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Маршрут для продления срока возврата книги
+@router.post("/borrowed-books/{borrowed_id}/extend")
+async def extend_return_date(
+    request: Request, 
+    borrowed_id: int, 
+    data: dict
+):
+    try:
+        if not is_admin(request):
+            raise HTTPException(status_code=403, detail="Доступ запрещен")
+            
+        new_return_date = data.get("new_return_date")
+        if not new_return_date:
+            raise HTTPException(status_code=400, detail="Не указана новая дата возврата")
+        
+        # Проверяем, что новая дата не раньше чем текущая
+        today = datetime.now().date()
+        try:
+            parsed_date = datetime.strptime(new_return_date, "%Y-%m-%d").date()
+            if parsed_date <= today:
+                raise HTTPException(status_code=400, detail="Новая дата должна быть позже текущей даты")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Некорректный формат даты")
+            
+        with get_db() as conn:
+            cursor = conn.cursor()
+            
+            # Проверяем существование записи о выдаче
+            cursor.execute("SELECT id FROM borrowed_books WHERE id = ? AND status = 'borrowed'", (borrowed_id,))
+            if not cursor.fetchone():
+                raise HTTPException(status_code=404, detail="Запись о выдаче не найдена или книга уже возвращена")
+            
+            # Обновляем дату возврата
+            cursor.execute("""
+                UPDATE borrowed_books
+                SET return_date = ?
+                WHERE id = ?
+            """, (new_return_date, borrowed_id))
+            
+            conn.commit()
+            
+            return {"success": True, "message": "Дата возврата успешно продлена"}
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error extending return date: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Маршрут для отправки напоминания пользователю
+@router.post("/users/{user_id}/send-reminder")
+async def send_book_reminder(
+    request: Request, 
+    user_id: int, 
+    data: dict
+):
+    try:
+        if not is_admin(request):
+            raise HTTPException(status_code=403, detail="Доступ запрещен")
+            
+        borrowed_id = data.get("borrowed_id")
+        if not borrowed_id:
+            raise HTTPException(status_code=400, detail="Не указан ID записи о выдаче")
+            
+        with get_db() as conn:
+            cursor = conn.cursor()
+            
+            # Получаем информацию о книге и пользователе
+            cursor.execute("""
+                SELECT 
+                    u.full_name, u.telegram_id, u.email,
+                    b.title, b.author,
+                    bb.return_date,
+                    CAST(julianday(date('now')) - julianday(date(bb.return_date)) AS INTEGER) as days_overdue
+                FROM 
+                    borrowed_books bb
+                JOIN 
+                    book_copies bc ON bb.copy_id = bc.id
+                JOIN 
+                    books b ON bc.book_id = b.id
+                JOIN 
+                    users u ON bb.user_id = u.id
+                WHERE 
+                    bb.id = ? AND u.id = ?
+            """, (borrowed_id, user_id))
+            
+            result = cursor.fetchone()
+            if not result:
+                raise HTTPException(status_code=404, detail="Информация о выдаче не найдена")
+                
+            user_info = dict(zip([column[0] for column in cursor.description], result))
+            
+            # Готовим текст напоминания
+            reminder_text = f"""
+                Уважаемый(ая) {user_info['full_name']}!
+                
+                Напоминаем, что вы должны были вернуть книгу "{user_info['title']}" автора {user_info['author']} 
+                до {user_info['return_date']}. На данный момент просрочка составляет {user_info['days_overdue']} дней.
+                
+                Пожалуйста, верните книгу в библиотеку в ближайшее время.
+                
+                С уважением, библиотека школы.
+            """
+            
+            # Сохраняем запись о напоминании
+            cursor.execute("""
+                INSERT INTO user_notifications (user_id, message, created_at, type, status)
+                VALUES (?, ?, datetime('now'), 'overdue_reminder', 'pending')
+            """, (user_id, reminder_text))
+            
+            notification_id = cursor.lastrowid
+            
+            conn.commit()
+            
+            # Здесь можно добавить логику отправки уведомления через Telegram или email
+            # Это зависит от реализации вашего бота и системы уведомлений
+            
+            # Отмечаем напоминание как отправленное
+            cursor.execute("""
+                UPDATE user_notifications
+                SET status = 'sent', sent_at = datetime('now')
+                WHERE id = ?
+            """, (notification_id,))
+            
+            conn.commit()
+            
+            return {"success": True, "message": "Напоминание успешно отправлено"}
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Error sending reminder: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/reports")
+async def reports_page(request: Request):
+    """
+    Страница отчетов библиотеки.
+    В разработке.
+    """
+    try:
+        if not is_admin(request):
+            return RedirectResponse(url="/login", status_code=302)
+            
+        admin_info = get_admin_info(request)
+        
+        return templates.TemplateResponse("reports.html", {
+            "request": request,
+            "admin_info": admin_info
+        })
+            
+    except Exception as e:
+        logging.error(f"Error loading reports page: {e}")
+        return templates.TemplateResponse("error.html", {
+            "request": request, 
+            "error": f"Ошибка загрузки страницы отчетов: {e}"
+        })

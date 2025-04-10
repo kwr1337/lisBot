@@ -250,6 +250,23 @@ def migrate_users():
         logging.error(f"Error migrating users table: {e}")
         raise e
 
+def create_school_info_table(cursor):
+    """Создает таблицу для хранения информации о школе"""
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS school_info (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        type TEXT DEFAULT 'school',
+        address TEXT,
+        phone TEXT,
+        email TEXT,
+        website TEXT,
+        director TEXT,
+        description TEXT,
+        logo_url TEXT
+    )
+    ''')
+
 def init_db():
     try:
         with get_db() as conn:
@@ -382,6 +399,9 @@ def init_db():
                     FOREIGN KEY (book_id) REFERENCES books (id)
                 )
             """)
+            
+            # Создаем таблицу для профиля школы
+            create_school_info_table(cursor)
             
             # Добавляем вызов миграции
             migrate_borrowed_books()

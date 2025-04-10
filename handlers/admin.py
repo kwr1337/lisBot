@@ -91,7 +91,8 @@ async def scan_qr_command(message: types.Message):
     kb.button(text="📥 Вернуть одну книгу", callback_data="scan_return")
     kb.button(text="📚 Выдача учебников", callback_data="mass_issue")
     kb.button(text="📚 Возврат учебников", callback_data="mass_return")
-    kb.adjust(2)
+    kb.button(text="📚 Выдать без бронирования", callback_data="direct_issue")
+    kb.adjust(2, 2, 1)
     
     await message.answer(
         "📷 Выберите действие для сканирования:",
@@ -297,7 +298,7 @@ async def process_qr_photo(message: types.Message, state: FSMContext):
             return
             
         # Получаем ID экземпляра из QR-кода
-        copy_id = decoded_objects[0].data.decode('utf-8')
+        copy_id = int(decoded_objects[0].data.decode('utf-8').split('.')[0])
         
         with get_db() as conn:
             cursor = conn.cursor()
@@ -362,7 +363,17 @@ async def process_qr_photo(message: types.Message, state: FSMContext):
             
             for res_id, user_id, full_name, username, created_at in reservations:
                 display_name = full_name or f"@{username}"
-                created_at_fmt = datetime.strptime(created_at, "%Y-%m-%d %H:%M:%S").strftime("%d.%m %H:%M")
+                try:
+                    # Обрабатываем дату с возможными миллисекундами
+                    try:
+                        created_at_fmt = datetime.strptime(created_at, "%Y-%m-%d %H:%M:%S").strftime("%d.%m %H:%M")
+                    except ValueError:
+                        # Если не получилось, пробуем формат с миллисекундами
+                        created_at_fmt = datetime.strptime(created_at.split(".")[0], "%Y-%m-%d %H:%M:%S").strftime("%d.%m %H:%M")
+                except Exception as e:
+                    logging.error(f"Error formatting date: {e}")
+                    created_at_fmt = "Неизвестная дата"
+                
                 kb.button(
                     text=f"{display_name} (забронировано: {created_at_fmt})",
                     callback_data=f"issue_{copy_id}_{res_id}"
@@ -790,79 +801,66 @@ async def get_book_info(copy_id: str) -> tuple:
     finally:
         conn.close()
 
-@router.message(AdminStates.waiting_for_return_qr, F.photo)
+@router.message(AdminStates.waiting_for_return_qr)
 async def process_return_qr(message: types.Message, state: FSMContext):
     try:
-        # Скачиваем фото
+        if not message.photo:
+            await message.answer("❌ Пожалуйста, отправьте фото QR-кода книги")
+            return
+            
+        # Обработка QR-кода
         photo = await message.bot.get_file(message.photo[-1].file_id)
         photo_bytes = await message.bot.download_file(photo.file_path)
-        
-        # Конвертируем в формат для opencv
         nparr = np.frombuffer(photo_bytes.read(), np.uint8)
         image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-        
-        # Декодируем QR-код
         decoded_objects = decode(image)
         
         if not decoded_objects:
-            await message.answer(
-                "❌ QR-код не найден.\n\n"
-                "Убедитесь, что:\n"
-                "• QR-код хорошо освещен\n"
-                "• Изображение не размыто\n"
-                "• QR-код полностью попадает в кадр"
-            )
+            await message.answer("❌ QR-код не найден. Попробуйте еще раз")
             return
             
-        # Получаем ID экземпляра из QR-кода
-        copy_id = decoded_objects[0].data.decode('utf-8')
+        copy_id = int(decoded_objects[0].data.decode('utf-8').split('.')[0])
         
         with get_db() as conn:
             cursor = conn.cursor()
             
-            # Получаем информацию о взятой книге
+            # Проверяем наличие активной записи в borrowed_books, а не только статус в book_copies
             cursor.execute("""
                 SELECT 
                     bb.id as borrow_id,
                     b.title,
+                    b.author,
+                    u.id as student_id,
                     u.full_name,
-                    u.username,
-                    u.id as user_id,
-                    bb.borrow_date,
-                    bb.return_date,
                     bc.status as copy_status
                 FROM book_copies bc
-                LEFT JOIN borrowed_books bb ON bc.id = bb.copy_id AND bb.status = 'borrowed'
-                LEFT JOIN books b ON bc.book_id = b.id
+                JOIN books b ON bc.book_id = b.id
+                LEFT JOIN borrowed_books bb ON bb.copy_id = bc.id AND bb.status = 'borrowed'
                 LEFT JOIN users u ON bb.user_id = u.id
                 WHERE bc.id = ?
             """, (copy_id,))
             
-            book_info = cursor.fetchone()
-            
-            if not book_info:
-                await message.answer("❌ Книга не найдена в базе данных")
+            book = cursor.fetchone()
+            if not book:
+                await message.answer("❌ Книга не найдена")
                 return
                 
-            borrow_id, title, full_name, username, user_id, borrow_date, return_date, copy_status = book_info
+            borrow_id, title, author, student_id, full_name, copy_status = book
             
-            if copy_status != 'borrowed':
+            # Проверяем наличие активной записи о выдаче
+            if not borrow_id:
                 await message.answer(
                     "❌ Эта книга не числится на руках\n"
                     f"Текущий статус: {copy_status}"
                 )
                 return
             
-            if not borrow_id:
-                await message.answer("❌ Не найдена информация о выдаче этой книги")
-                return
-                
-            display_name = full_name or f"@{username}"
+            display_name = full_name or f"ID:{student_id}"
             
             # Обновляем статусы
             cursor.execute("""
                 UPDATE borrowed_books 
-                SET status = 'returned' 
+                SET status = 'returned', return_date = datetime('now')
                 WHERE id = ?
             """, (borrow_id,))
             
@@ -879,13 +877,13 @@ async def process_return_qr(message: types.Message, state: FSMContext):
                 f"✅ Книга успешно возвращена:\n"
                 f"📖 {title}\n"
                 f"👤 Читатель: {display_name}\n"
-                f"📅 Была выдана: {datetime.strptime(borrow_date, '%Y-%m-%d %H:%M:%S').strftime('%d.%m.%Y')}"
+                f"📅 Была выдана: {datetime.now().strftime('%d.%m.%Y')}"
             )
             
             # Уведомляем пользователя
             try:
                 await message.bot.send_message(
-                    user_id,
+                    student_id,
                     f"📚 Спасибо, что вернули книгу:\n"
                     f"«{title}»\n\n"
                     f"Ждем вас снова! 😊"
@@ -1106,15 +1104,38 @@ async def back_to_teacher_menu(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "mass_issue")
 async def start_mass_issue(callback: types.CallbackQuery, state: FSMContext):
-    await state.set_state(AdminStates.waiting_for_student_qr)
-    await callback.message.answer(
-        "1️⃣ Сначала отсканируйте QR-код ученика или отправьте его ID"
-    )
-    await callback.answer()
+    try:
+        # Очищаем состояние
+        await state.clear()
+        
+        # Устанавливаем состояние ожидания QR-кода ученика
+        await state.set_state(AdminStates.waiting_for_student_qr)
+        
+        # Отправляем сообщение с инструкцией
+        await callback.message.answer(
+            "1️⃣ Отсканируйте QR-код ученика или отправьте его ID для выдачи учебников",
+            reply_markup=ReplyKeyboardRemove()
+        )
+        
+        # Подтверждаем нажатие кнопки
+        await callback.answer("Ожидание QR-кода ученика")
+        
+    except Exception as e:
+        logging.error(f"Error in start_mass_issue: {e}")
+        await callback.answer("Произошла ошибка", show_alert=True)
 
 @router.message(AdminStates.waiting_for_student_qr)
 async def process_student_qr(message: types.Message, state: FSMContext):
     try:
+        # Добавляем проверку на отмену операции
+        if message.text and message.text.lower() == "отмена":
+            await state.clear()
+            await message.answer(
+                "❌ Операция выдачи учебников отменена",
+                reply_markup=get_admin_keyboard()
+            )
+            return
+            
         student_id = None
         
         if message.photo:
@@ -1126,292 +1147,255 @@ async def process_student_qr(message: types.Message, state: FSMContext):
             decoded_objects = decode(image)
             
             if not decoded_objects:
-                await message.answer("❌ QR-код не найден. Попробуйте еще раз")
+                # Добавляем клавиатуру с кнопкой отмены
+                kb = InlineKeyboardBuilder()
+                kb.button(text="❌ Отменить выдачу", callback_data="cancel_mass_issue")
+                
+                await message.answer(
+                    "❌ QR-код не найден. Попробуйте еще раз или отправьте 'отмена' для отмены операции",
+                    reply_markup=kb.as_markup()
+                )
                 return
                 
             student_id = int(decoded_objects[0].data.decode('utf-8'))
         else:
             # Обработка ID
-            student_id = int(message.text)
+            try:
+                student_id = int(message.text)
+            except ValueError:
+                # Добавляем клавиатуру с кнопкой отмены
+                kb = InlineKeyboardBuilder()
+                kb.button(text="❌ Отменить выдачу", callback_data="cancel_mass_issue")
+                
+                await message.answer(
+                    "❌ Некорректный ID пользователя. Попробуйте еще раз или отправьте 'отмена' для отмены операции",
+                    reply_markup=kb.as_markup()
+                )
+                return
         
         with get_db() as conn:
             cursor = conn.cursor()
             
-            # Получаем информацию о пользователе и его забронированных книгах
+            # Получаем информацию о пользователе
             cursor.execute("""
-                SELECT 
-                    u.full_name, 
-                    u.class,
-                    b.id as book_id,
-                    b.title,
-                    b.author,
-                    r.id as reservation_id
-                FROM users u
-                LEFT JOIN book_reservations r ON u.id = r.user_id
-                LEFT JOIN books b ON r.book_id = b.id
-                WHERE u.id = ? AND r.status = 'pending'
+                SELECT full_name, class 
+                FROM users 
+                WHERE id = ?
             """, (student_id,))
             
-            results = cursor.fetchall()
-            if not results:
-                await message.answer("❌ Пользователь не найден или у него нет забронированных книг")
+            user = cursor.fetchone()
+            if not user:
+                # Добавляем клавиатуру с кнопкой отмены
+                kb = InlineKeyboardBuilder()
+                kb.button(text="❌ Отменить выдачу", callback_data="cancel_mass_issue")
+                
+                await message.answer(
+                    "❌ Пользователь не найден. Попробуйте еще раз или отправьте 'отмена' для отмены операции",
+                    reply_markup=kb.as_markup()
+                )
                 return
-
-            student_name = results[0][0]
-            student_class = results[0][1]
             
-            # Создаем клавиатуру с забронированными книгами
+            student_name, student_class = user
+            
+            # Сохраняем данные ученика и инициализируем счетчик выданных учебников
+            await state.update_data(student_id=student_id, student_name=student_name, issued_books=0)
+            
+            # Добавляем клавиатуру с кнопкой отмены
             kb = InlineKeyboardBuilder()
-            for _, _, book_id, title, author, reservation_id in results:
-                if book_id:  # Проверяем, что есть забронированные книги
-                    kb.button(
-                        text=f"📖 {title} - {author}",
-                        callback_data=f"select_book_{reservation_id}"
-                    )
+            kb.button(text="✅ Завершить выдачу учебников", callback_data="finish_mass_issue")
+            kb.button(text="❌ Отменить выдачу", callback_data="cancel_mass_issue")
             kb.adjust(1)
             
-            await state.update_data(student_id=student_id, student_name=student_name)
+            # Переходим к сканированию учебников
             await message.answer(
                 f"2️⃣ Выбран читатель: {student_name} ({student_class})\n\n"
-                f"Выберите книгу для выдачи:",
+                f"Отсканируйте QR-код учебника для выдачи.\n"
+                f"Вы можете отсканировать несколько учебников подряд.\n"
+                f"После завершения нажмите кнопку 'Завершить выдачу учебников'",
                 reply_markup=kb.as_markup()
             )
             
-            await state.set_state(AdminStates.waiting_for_book_selection)
+            await state.set_state(AdminStates.waiting_for_book_qr)
             
-    except ValueError:
-        await message.answer("❌ Некорректный ID пользователя")
     except Exception as e:
         logging.error(f"Error processing student QR: {e}")
-        await message.answer("❌ Произошла ошибка при обработке QR-кода")
+        
+        # Добавляем клавиатуру с кнопкой отмены
+        kb = InlineKeyboardBuilder()
+        kb.button(text="❌ Отменить выдачу", callback_data="cancel_mass_issue")
+        
+        await message.answer(
+            "❌ Произошла ошибка при обработке QR-кода. Попробуйте еще раз или отправьте 'отмена' для отмены операции",
+            reply_markup=kb.as_markup()
+        )
 
-@router.callback_query(AdminStates.waiting_for_book_selection, F.data.startswith("select_book_"))
-async def process_book_selection(callback: types.CallbackQuery, state: FSMContext):
-    reservation_id = int(callback.data.split("_")[2])
-    
-    await callback.message.answer(
-        "3️⃣ Теперь отсканируйте QR-код экземпляра книги:"
-    )
-    await state.update_data(reservation_id=reservation_id)
-    await state.set_state(AdminStates.waiting_for_book_qr)
-
-@router.message(AdminStates.waiting_for_book_qr, F.photo)
+@router.message(AdminStates.waiting_for_book_qr)
 async def process_book_qr(message: types.Message, state: FSMContext):
     try:
-        # Скачиваем фото
+        # Добавляем проверку на отмену операции
+        if message.text and message.text.lower() == "отмена":
+            await state.clear()
+            await message.answer(
+                "❌ Операция выдачи учебников отменена",
+                reply_markup=get_admin_keyboard()
+            )
+            return
+            
+        if not message.photo:
+            # Добавляем клавиатуру с кнопкой отмены
+            kb = InlineKeyboardBuilder()
+            kb.button(text="✅ Завершить выдачу учебников", callback_data="finish_mass_issue")
+            kb.button(text="❌ Отменить выдачу", callback_data="cancel_mass_issue")
+            kb.adjust(1)
+            
+            await message.answer(
+                "❌ Пожалуйста, отправьте фото QR-кода учебника или отправьте 'отмена' для отмены операции",
+                reply_markup=kb.as_markup()
+            )
+            return
+            
+        # Обработка QR-кода
         photo = await message.bot.get_file(message.photo[-1].file_id)
         photo_bytes = await message.bot.download_file(photo.file_path)
-        
-        # Конвертируем в формат для opencv
         nparr = np.frombuffer(photo_bytes.read(), np.uint8)
         image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-        
-        # Декодируем QR-код
         decoded_objects = decode(image)
         
         if not decoded_objects:
-            await message.answer("❌ QR-код не найден. Попробуйте еще раз")
+            # Добавляем клавиатуру с кнопкой отмены
+            kb = InlineKeyboardBuilder()
+            kb.button(text="✅ Завершить выдачу учебников", callback_data="finish_mass_issue")
+            kb.button(text="❌ Отменить выдачу", callback_data="cancel_mass_issue")
+            kb.adjust(1)
+            
+            await message.answer(
+                "❌ QR-код не найден. Попробуйте еще раз или отправьте 'отмена' для отмены операции",
+                reply_markup=kb.as_markup()
+            )
             return
             
         # Получаем ID экземпляра из QR-кода
-        copy_id = decoded_objects[0].data.decode('utf-8')
+        copy_id = int(decoded_objects[0].data.decode('utf-8').split('.')[0])
         data = await state.get_data()
+        student_id = data['student_id']
+        student_name = data['student_name']
+        # Получаем текущий список книг или создаем новый
+        scanned_books = data.get('scanned_books', [])
         
         with get_db() as conn:
             cursor = conn.cursor()
             
-            # Проверяем, что книга соответствует бронированию
+            # Проверяем доступность копии
             cursor.execute("""
                 SELECT 
-                    r.book_id,
-                    b.title,
-                    b.author
-                FROM book_reservations r
-                JOIN books b ON r.book_id = b.id
-                WHERE r.id = ?
-            """, (data['reservation_id'],))
-            
-            reservation = cursor.fetchone()
-            if not reservation:
-                await message.answer("❌ Бронирование не найдено")
-                return
-                
-            # Проверяем, что экземпляр соответствует книге
-            cursor.execute("""
-                SELECT book_id, status
-                FROM book_copies
-                WHERE id = ?
-            """, (copy_id,))
-            
-            copy = cursor.fetchone()
-            if not copy:
-                await message.answer("❌ Экземпляр книги не найден")
-                return
-                
-            if copy[0] != reservation[0]:
-                await message.answer(
-                    "❌ Этот экземпляр не соответствует забронированной книге\n"
-                    f"Нужна книга: {reservation[1]} ({reservation[2]})"
-                )
-                return
-                
-            if copy[1] != 'available':
-                await message.answer("❌ Этот экземпляр уже выдан")
-                return
-                
-            # Выдаем книгу
-            cursor.execute("""
-                INSERT INTO borrowed_books (
-                    user_id, book_id, copy_id, reservation_id,
-                    borrow_date, return_date, status
-                ) VALUES (
-                    ?, ?, ?, ?,
-                    datetime('now'),
-                    datetime('now', '+14 days'),
-                    'borrowed'
-                )
-            """, (data['student_id'], reservation[0], copy_id, data['reservation_id']))
-            
-            # Обновляем статус бронирования
-            cursor.execute("""
-                UPDATE book_reservations
-                SET status = 'completed'
-                WHERE id = ?
-            """, (data['reservation_id'],))
-            
-            conn.commit()
-            
-            await message.answer(
-                f"✅ Книга выдана:\n"
-                f"📖 {reservation[1]}\n"
-                f"👤 {data['student_name']}\n"
-                f"📅 Срок возврата: через 14 дней"
-            )
-            
-            await state.clear()
-            
-    except Exception as e:
-        logging.error(f"Error processing book QR: {e}")
-        await message.answer("❌ Произошла ошибка при обработке QR-кода")
-
-@router.callback_query(F.data == "mass_return")
-async def start_mass_return(callback: types.CallbackQuery, state: FSMContext):
-    await state.set_state(AdminStates.waiting_for_return_books)
-    await state.update_data(returned_books=[])  # Инициализируем список возвращаемых книг
-    
-    kb = InlineKeyboardBuilder()
-    kb.button(text="✅ Завершить возврат", callback_data="finish_mass_return")
-    kb.button(text="❌ Отменить", callback_data="cancel_mass_return")
-    kb.adjust(1)
-    
-    await callback.message.answer(
-        "📚 Массовый возврат книг\n\n"
-        "Сканируйте QR-коды книг по одной.\n"
-        "После завершения нажмите 'Завершить возврат'",
-        reply_markup=kb.as_markup()
-    )
-    await callback.answer()
-
-@router.message(AdminStates.waiting_for_return_books, F.photo)
-async def process_book_for_mass_return(message: types.Message, state: FSMContext):
-    try:
-        # Получаем фото и декодируем QR
-        photo = await message.bot.get_file(message.photo[-1].file_id)
-        photo_bytes = await message.bot.download_file(photo.file_path)
-        nparr = np.frombuffer(photo_bytes.read(), np.uint8)
-        image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-        decoded_objects = decode(image)
-        
-        if not decoded_objects:
-            await message.answer("❌ QR-код не найден. Попробуйте еще раз")
-            return
-            
-        copy_id = decoded_objects[0].data.decode('utf-8')
-        data = await state.get_data()
-        
-        with get_db() as conn:
-            cursor = conn.cursor()
-            
-            # Проверяем книгу
-            cursor.execute("""
-                SELECT 
+                    bc.id,
+                    b.id as book_id,
                     b.title,
                     b.author,
-                    u.full_name,
-                    u.id as user_id,
-                    bb.id as borrow_id
+                    bc.status
                 FROM book_copies bc
                 JOIN books b ON bc.book_id = b.id
-                JOIN borrowed_books bb ON bc.id = bb.copy_id
-                JOIN users u ON bb.user_id = u.id
-                WHERE bc.id = ? AND bb.status = 'borrowed'
+                WHERE bc.id = ?
             """, (copy_id,))
             
             book = cursor.fetchone()
             if not book:
-                await message.answer("❌ Эта книга не числится на руках")
+                # Добавляем клавиатуру с кнопкой отмены
+                kb = InlineKeyboardBuilder()
+                kb.button(text="✅ Завершить выдачу учебников", callback_data="finish_mass_issue")
+                kb.button(text="❌ Отменить выдачу", callback_data="cancel_mass_issue")
+                kb.adjust(1)
+                
+                await message.answer(
+                    "❌ Учебник не найден. Попробуйте еще раз или отправьте 'отмена' для отмены операции",
+                    reply_markup=kb.as_markup()
+                )
                 return
                 
-            title, author, student_name, student_id, borrow_id = book
+            copy_id, book_id, title, author, status = book
             
-            # Проверяем, не добавили ли мы уже эту книгу в список
-            returned_books = data.get('returned_books', [])
-            if any(b['copy_id'] == copy_id for b in returned_books):
-                await message.answer("❌ Эта книга уже добавлена в список")
+            if status != 'available':
+                # Добавляем клавиатуру с кнопкой отмены
+                kb = InlineKeyboardBuilder()
+                kb.button(text="✅ Завершить выдачу учебников", callback_data="finish_mass_issue")
+                kb.button(text="❌ Отменить выдачу", callback_data="cancel_mass_issue")
+                kb.adjust(1)
+                
+                await message.answer(
+                    "❌ Этот учебник уже выдан или забронирован. Попробуйте другой учебник или отправьте 'отмена' для отмены операции",
+                    reply_markup=kb.as_markup()
+                )
                 return
             
-            # Добавляем книгу в список
-            returned_books.append({
+            # Проверяем, не добавлен ли уже этот учебник
+            if any(book['copy_id'] == copy_id for book in scanned_books):
+                kb = InlineKeyboardBuilder()
+                kb.button(text="✅ Завершить выдачу учебников", callback_data="finish_mass_issue")
+                kb.button(text="❌ Отменить выдачу", callback_data="cancel_mass_issue")
+                kb.adjust(1)
+                
+                await message.answer(
+                    "❌ Этот учебник уже был отсканирован. Попробуйте другой учебник или отправьте 'отмена' для отмены операции",
+                    reply_markup=kb.as_markup()
+                )
+                return
+            
+            # Добавляем книгу в список для последующей выдачи
+            scanned_books.append({
                 'copy_id': copy_id,
-                'borrow_id': borrow_id,
+                'book_id': book_id,
                 'title': title,
-                'author': author,
-                'student_name': student_name,
-                'student_id': student_id
+                'author': author
             })
             
-            await state.update_data(returned_books=returned_books)
+            # Сохраняем список отсканированных книг
+            await state.update_data(scanned_books=scanned_books)
             
-            # Группируем книги по ученикам
-            students = {}
-            for book in returned_books:
-                if book['student_id'] not in students:
-                    students[book['student_id']] = {
-                        'name': book['student_name'],
-                        'books': []
-                    }
-                students[book['student_id']]['books'].append(f"📖 {book['title']}")
-            
-            # Формируем текст со списком
-            text = "📚 Отсканированные книги:\n\n"
-            for student_id, info in students.items():
-                text += f"👤 {info['name']}:\n"
-                text += "\n".join(info['books'])
-                text += "\n\n"
-            
+            # Добавляем клавиатуру с кнопкой отмены
             kb = InlineKeyboardBuilder()
-            kb.button(text="✅ Завершить возврат", callback_data="finish_mass_return")
-            kb.button(text="❌ Отменить", callback_data="cancel_mass_return")
+            kb.button(text="✅ Завершить выдачу учебников", callback_data="finish_mass_issue")
+            kb.button(text="❌ Отменить выдачу", callback_data="cancel_mass_issue")
             kb.adjust(1)
             
+            # Отправляем подтверждение администратору
             await message.answer(
-                text + "Продолжайте сканировать книги или нажмите 'Завершить возврат'",
+                f"✅ Учебник добавлен в список для выдачи:\n\n"
+                f"👤 Читатель: {student_name}\n"
+                f"📖 Учебник: {title} - {author}\n"
+                f"📚 Всего отсканировано учебников: {len(scanned_books)}\n\n"
+                f"Отсканируйте следующий учебник или нажмите 'Завершить выдачу учебников'",
                 reply_markup=kb.as_markup()
             )
             
     except Exception as e:
-        logging.error(f"Error in process_book_for_mass_return: {e}")
-        await message.answer("❌ Произошла ошибка при сканировании книги")
+        logging.error(f"Error processing book QR: {e}")
+        
+        # Добавляем клавиатуру с кнопкой отмены
+        kb = InlineKeyboardBuilder()
+        kb.button(text="✅ Завершить выдачу учебников", callback_data="finish_mass_issue")
+        kb.button(text="❌ Отменить выдачу", callback_data="cancel_mass_issue")
+        kb.adjust(1)
+        
+        await message.answer(
+            "❌ Произошла ошибка при обработке QR-кода. Попробуйте еще раз или отправьте 'отмена' для отмены операции",
+            reply_markup=kb.as_markup()
+        )
 
-@router.callback_query(F.data == "finish_mass_return")
-async def finish_mass_return(callback: types.CallbackQuery, state: FSMContext):
+@router.callback_query(F.data == "finish_mass_issue")
+async def finish_mass_issue(callback: types.CallbackQuery, state: FSMContext):
     try:
         data = await state.get_data()
-        returned_books = data.get('returned_books', [])
+        student_id = data.get('student_id')
+        student_name = data.get('student_name')
+        scanned_books = data.get('scanned_books', [])
         
-        if not returned_books:
-            await callback.answer("❌ Не отсканировано ни одной книги", show_alert=True)
+        # Проверяем, выданы ли учебники
+        if not scanned_books:
+            await callback.answer("❌ Не было отсканировано ни одного учебника", show_alert=True)
             return
+        
+        # Фактически выдаем все учебники
+        issued_count = 0
         
         with get_db() as conn:
             cursor = conn.cursor()
@@ -1420,61 +1404,95 @@ async def finish_mass_return(callback: types.CallbackQuery, state: FSMContext):
             cursor.execute("BEGIN")
             
             try:
-                for book in returned_books:
-                    # Обновляем статус в borrowed_books
-                    cursor.execute("""
-                        UPDATE borrowed_books 
-                        SET status = 'returned' 
-                        WHERE id = ?
-                    """, (book['borrow_id'],))
+                now = datetime.now()
+                return_date = now + timedelta(days=180)  # Срок возврата - 180 дней (полгода)
                 
+                for book in scanned_books:
+                    copy_id = book['copy_id']
+                    book_id = book['book_id']
+                    
+                    # Проверяем, что книга все еще доступна
+                    cursor.execute("""
+                        SELECT status FROM book_copies WHERE id = ?
+                    """, (copy_id,))
+                    
+                    status = cursor.fetchone()
+                    if not status or status[0] != 'available':
+                        continue  # Пропускаем книгу, если она недоступна
+                    
+                    # Обновляем статус копии
+                    cursor.execute("""
+                        UPDATE book_copies 
+                        SET status = 'borrowed' 
+                        WHERE id = ?
+                    """, (copy_id,))
+                    
+                    # Добавляем запись о выдаче
+                    cursor.execute("""
+                        INSERT INTO borrowed_books (
+                            user_id, book_id, copy_id, borrow_date, return_date, status, is_textbook, is_mass_issue
+                        ) VALUES (?, ?, ?, ?, ?, 'borrowed', 1, 1)
+                    """, (student_id, book_id, copy_id, now, return_date))
+                    
+                    issued_count += 1
+                
+                # Подтверждаем транзакцию
                 conn.commit()
                 
-                # Группируем книги по ученикам для уведомлений
-                students = {}
-                for book in returned_books:
-                    if book['student_id'] not in students:
-                        students[book['student_id']] = {
-                            'name': book['student_name'],
-                            'books': []
-                        }
-                    students[book['student_id']]['books'].append(book['title'])
-                
-                # Отправляем уведомления ученикам
-                for student_id, info in students.items():
-                    try:
-                        await callback.bot.send_message(
-                            student_id,
-                            f"📚 Возвращены книги:\n\n" +
-                            "\n".join(f"📖 {title}" for title in info['books']) +
-                            "\n\nСпасибо, что пользуетесь библиотекой! 😊"
-                        )
-                    except Exception as e:
-                        logging.error(f"Error sending notification to student: {e}")
-                
-                # Формируем итоговый отчет
-                text = "✅ Книги успешно возвращены:\n\n"
-                for student_id, info in students.items():
-                    text += f"👤 {info['name']}:\n"
-                    text += "\n".join(f"📖 {title}" for title in info['books'])
-                    text += "\n\n"
-                
-                await callback.message.edit_text(text)
-                
             except Exception as e:
+                # В случае ошибки откатываем транзакцию
                 cursor.execute("ROLLBACK")
-                raise e
+                logging.error(f"Error in transaction: {e}")
+                await callback.answer("❌ Произошла ошибка при выдаче учебников", show_alert=True)
+                return
+        
+        # Отправляем уведомление пользователю
+                try:
+                    await callback.bot.send_message(
+                student_id,
+                f"📚 Вам выданы учебники в количестве: {issued_count} шт.\n\n"
+                f"📅 Срок возврата: через 180 дней (6 месяцев)\n\n"
+                f"⚠️ Учебники будут отображаться в разделе 'Мои учебники'\n\n"
+                f"Хорошей учебы! 😊"
+                    )
+                except Exception as e:
+                    logging.error(f"Error sending notification to student: {e}")
                 
+        # Отправляем итоговое сообщение администратору
+        await callback.message.edit_text(
+            f"✅ Выдача учебников завершена\n\n"
+            f"👤 Читатель: {student_name}\n"
+            f"📚 Всего выдано учебников: {issued_count}\n\n"
+            f"Учебники выданы сроком на 180 дней (6 месяцев)"
+        )
+        
+        # Предлагаем выдать учебники другому ученику
+        kb = InlineKeyboardBuilder()
+        kb.button(text="📚 Выдать учебники другому ученику", callback_data="mass_issue")
+        kb.button(text="🔙 Вернуться в меню", callback_data="back_to_menu")
+        kb.adjust(1)
+        
+        await callback.message.answer(
+            "Выберите дальнейшее действие:",
+            reply_markup=kb.as_markup()
+        )
+        
+        # Очищаем состояние
         await state.clear()
         
     except Exception as e:
-        logging.error(f"Error in finish_mass_return: {e}")
-        await callback.answer("❌ Произошла ошибка при возврате книг", show_alert=True)
+        logging.error(f"Error in finish_mass_issue: {e}")
+        await callback.answer("❌ Произошла ошибка при завершении выдачи", show_alert=True)
 
-@router.callback_query(F.data == "cancel_mass_return")
-async def cancel_mass_return(callback: types.CallbackQuery, state: FSMContext):
+@router.callback_query(F.data == "cancel_mass_issue")
+async def cancel_mass_issue(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
-    await callback.message.edit_text("❌ Возврат книг отменен")
+    await callback.message.edit_text("❌ Операция выдачи учебников отменена")
+    await callback.message.answer(
+        "🔐 Панель администратора\n\n"
+        "Выберите нужное действие:",
+        reply_markup=get_admin_keyboard()
+    )
 
 # Этот обработчик перехватывает ВСЕ callbacks и мешает работе остальных
 # Временно закомментируем его для отладки
@@ -1483,3 +1501,548 @@ async def log_all_callbacks(callback: types.CallbackQuery):
     logging.warning(f"DEBUG: Получен callback: {callback.data}")
     # Позволяем обработку продолжиться
     return False 
+
+@router.callback_query(F.data == "direct_issue")
+async def start_direct_issue(callback: types.CallbackQuery, state: FSMContext):
+    try:
+        # Очищаем состояние
+        await state.clear()
+        
+        # Устанавливаем состояние ожидания QR-кода ученика
+        await state.set_state(AdminStates.waiting_for_direct_issue_student)
+        
+        # Отправляем сообщение с инструкцией
+        await callback.message.answer(
+            "1️⃣ Отсканируйте QR-код ученика или отправьте его ID:",
+            reply_markup=ReplyKeyboardRemove()
+        )
+        
+        # Подтверждаем нажатие кнопки
+        await callback.answer("Ожидание QR-кода ученика")
+        
+    except Exception as e:
+        logging.error(f"Error in start_direct_issue: {e}")
+        await callback.answer("Произошла ошибка", show_alert=True)
+
+@router.message(AdminStates.waiting_for_direct_issue_student)
+async def process_direct_issue_student(message: types.Message, state: FSMContext):
+    try:
+        # Добавляем проверку на отмену операции
+        if message.text and message.text.lower() == "отмена":
+            await state.clear()
+            await message.answer(
+                "❌ Операция выдачи книги отменена",
+                reply_markup=get_admin_keyboard()
+            )
+            return
+            
+        student_id = None
+        
+        if message.photo:
+            # Обработка QR-кода
+            photo = await message.bot.get_file(message.photo[-1].file_id)
+            photo_bytes = await message.bot.download_file(photo.file_path)
+            nparr = np.frombuffer(photo_bytes.read(), np.uint8)
+            image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            decoded_objects = decode(image)
+            
+            if not decoded_objects:
+                # Добавляем клавиатуру с кнопкой отмены
+                kb = InlineKeyboardBuilder()
+                kb.button(text="❌ Отменить выдачу", callback_data="cancel_direct_issue")
+                
+                await message.answer(
+                    "❌ QR-код не найден. Попробуйте еще раз или отправьте 'отмена' для отмены операции",
+                    reply_markup=kb.as_markup()
+                )
+                return
+            
+            student_id = int(decoded_objects[0].data.decode('utf-8'))
+        else:
+            # Обработка ID
+            try:
+                student_id = int(message.text)
+            except ValueError:
+                # Добавляем клавиатуру с кнопкой отмены
+                kb = InlineKeyboardBuilder()
+                kb.button(text="❌ Отменить выдачу", callback_data="cancel_direct_issue")
+                
+                await message.answer(
+                    "❌ Некорректный ID пользователя. Попробуйте еще раз или отправьте 'отмена' для отмены операции",
+                    reply_markup=kb.as_markup()
+                )
+                return
+        
+        with get_db() as conn:
+            cursor = conn.cursor()
+            
+            # Получаем информацию о пользователе
+            cursor.execute("""
+                SELECT full_name, class
+                FROM users
+                WHERE id = ?
+            """, (student_id,))
+            
+            user = cursor.fetchone()
+            if not user:
+                # Добавляем клавиатуру с кнопкой отмены
+                kb = InlineKeyboardBuilder()
+                kb.button(text="❌ Отменить выдачу", callback_data="cancel_direct_issue")
+                
+                await message.answer(
+                    "❌ Пользователь не найден. Попробуйте еще раз или отправьте 'отмена' для отмены операции",
+                    reply_markup=kb.as_markup()
+                )
+                return
+                
+            student_name, student_class = user
+            
+            # Сохраняем данные ученика
+            await state.update_data(student_id=student_id, student_name=student_name)
+            
+            # Добавляем клавиатуру с кнопкой отмены
+            kb = InlineKeyboardBuilder()
+            kb.button(text="❌ Отменить выдачу", callback_data="cancel_direct_issue")
+            
+            # Переходим к сканированию книги
+            await message.answer(
+                f"2️⃣ Выбран читатель: {student_name} ({student_class})\n\n"
+                f"Отсканируйте QR-код книги для выдачи или отправьте 'отмена' для отмены операции:",
+                reply_markup=kb.as_markup()
+            )
+            
+            await state.set_state(AdminStates.waiting_for_direct_issue_book)
+            
+    except Exception as e:
+        logging.error(f"Error processing student QR: {e}")
+        
+        # Добавляем клавиатуру с кнопкой отмены
+        kb = InlineKeyboardBuilder()
+        kb.button(text="❌ Отменить выдачу", callback_data="cancel_direct_issue")
+        
+        await message.answer(
+            "❌ Произошла ошибка при обработке QR-кода. Попробуйте еще раз или отправьте 'отмена' для отмены операции",
+            reply_markup=kb.as_markup()
+        )
+            
+@router.message(AdminStates.waiting_for_direct_issue_book)
+async def process_direct_issue_book(message: types.Message, state: FSMContext):
+    try:
+        # Добавляем проверку на отмену операции
+        if message.text and message.text.lower() == "отмена":
+            await state.clear()
+            await message.answer(
+                "❌ Операция выдачи книги отменена",
+                reply_markup=get_admin_keyboard()
+            )
+            return
+            
+        if not message.photo:
+            # Добавляем клавиатуру с кнопкой отмены
+            kb = InlineKeyboardBuilder()
+            kb.button(text="❌ Отменить выдачу", callback_data="cancel_direct_issue")
+            
+            await message.answer(
+                "❌ Пожалуйста, отправьте фото QR-кода книги или отправьте 'отмена' для отмены операции",
+                reply_markup=kb.as_markup()
+            )
+            return
+            
+        # Обработка QR-кода
+        photo = await message.bot.get_file(message.photo[-1].file_id)
+        photo_bytes = await message.bot.download_file(photo.file_path)
+        nparr = np.frombuffer(photo_bytes.read(), np.uint8)
+        image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        decoded_objects = decode(image)
+        
+        if not decoded_objects:
+            # Добавляем клавиатуру с кнопкой отмены
+            kb = InlineKeyboardBuilder()
+            kb.button(text="❌ Отменить выдачу", callback_data="cancel_direct_issue")
+            
+            await message.answer(
+                "❌ QR-код не найден. Попробуйте еще раз или отправьте 'отмена' для отмены операции",
+                reply_markup=kb.as_markup()
+            )
+            return
+            
+        copy_id = int(decoded_objects[0].data.decode('utf-8').split('.')[0])
+        data = await state.get_data()
+        student_id = data['student_id']
+        student_name = data['student_name']
+        
+        with get_db() as conn:
+            cursor = conn.cursor()
+            
+            # Проверяем доступность копии
+            cursor.execute("""
+                SELECT 
+                    bc.id,
+                    b.id as book_id,
+                    b.title,
+                    b.author,
+                    bc.status
+                FROM book_copies bc
+                JOIN books b ON bc.book_id = b.id
+                WHERE bc.id = ?
+            """, (copy_id,))
+            
+            book = cursor.fetchone()
+            if not book:
+                # Добавляем клавиатуру с кнопкой отмены
+                kb = InlineKeyboardBuilder()
+                kb.button(text="❌ Отменить выдачу", callback_data="cancel_direct_issue")
+                
+                await message.answer(
+                    "❌ Книга не найдена. Попробуйте еще раз или отправьте 'отмена' для отмены операции",
+                    reply_markup=kb.as_markup()
+                )
+                return
+                
+            copy_id, book_id, title, author, status = book
+            
+            if status != 'available':
+                # Добавляем клавиатуру с кнопкой отмены
+                kb = InlineKeyboardBuilder()
+                kb.button(text="❌ Отменить выдачу", callback_data="cancel_direct_issue")
+                
+                await message.answer(
+                    "❌ Эта книга уже выдана или забронирована. Попробуйте другую книгу или отправьте 'отмена' для отмены операции",
+                    reply_markup=kb.as_markup()
+                )
+                return
+            
+            # Выдаем книгу
+            now = datetime.now()
+            return_date = now + timedelta(days=14)  # Срок возврата - 14 дней
+            
+            # Обновляем статус копии
+            cursor.execute("""
+                UPDATE book_copies 
+                SET status = 'borrowed' 
+                WHERE id = ?
+            """, (copy_id,))
+            
+            # Добавляем запись о выдаче
+            cursor.execute("""
+                INSERT INTO borrowed_books (
+                    user_id, book_id, copy_id, borrow_date, return_date, status
+                ) VALUES (?, ?, ?, ?, ?, 'borrowed')
+            """, (student_id, book_id, copy_id, now, return_date))
+            
+            conn.commit()
+            
+            # Отправляем уведомление пользователю
+            try:
+                await message.bot.send_message(
+                    student_id,
+                    f"📚 Вам выдана книга:\n\n"
+                    f"📖 {title} - {author}\n\n"
+                    f"📅 Срок возврата: {return_date.strftime('%d.%m.%Y')}\n\n"
+                    f"Приятного чтения! 😊"
+                )
+            except Exception as e:
+                logging.error(f"Error sending notification to student: {e}")
+            
+            # Отправляем подтверждение администратору
+            await message.answer(
+                f"✅ Книга успешно выдана:\n\n"
+                f"👤 Читатель: {student_name}\n"
+                f"📖 Книга: {title} - {author}\n"
+                f"📅 Срок возврата: {return_date.strftime('%d.%m.%Y')}"
+            )
+            
+            # Предлагаем выдать еще одну книгу
+            kb = InlineKeyboardBuilder()
+            kb.button(text="📚 Выдать еще книгу", callback_data="direct_issue")
+            kb.button(text="🔙 Вернуться в меню", callback_data="back_to_menu")
+            kb.adjust(1)
+            
+            await message.answer(
+                "Выберите дальнейшее действие:",
+                reply_markup=kb.as_markup()
+            )
+            
+            # Очищаем состояние
+            await state.clear()
+        
+    except Exception as e:
+        logging.error(f"Error processing book QR: {e}")
+        
+        # Добавляем клавиатуру с кнопкой отмены
+        kb = InlineKeyboardBuilder()
+        kb.button(text="❌ Отменить выдачу", callback_data="cancel_direct_issue")
+        
+        await message.answer(
+            "❌ Произошла ошибка при обработке QR-кода. Попробуйте еще раз или отправьте 'отмена' для отмены операции",
+            reply_markup=kb.as_markup()
+        )
+
+@router.callback_query(F.data == "mass_return")
+async def mass_return(callback: types.CallbackQuery, state: FSMContext):
+    # Добавляем клавиатуру с кнопками
+    kb = InlineKeyboardBuilder()
+    kb.button(text="✅ Завершить возврат", callback_data="finish_mass_return")
+    kb.button(text="❌ Отменить возврат", callback_data="cancel_mass_return")
+    kb.adjust(1)
+    
+    # Инициализируем список для хранения отсканированных книг
+    await state.update_data(scanned_books=[])
+    
+    await callback.message.answer(
+        "📚 Отсканируйте QR-коды учебников, которые хотите вернуть\n\n"
+        "После сканирования всех учебников нажмите 'Завершить возврат'\n"
+        "Для отмены операции нажмите 'Отменить возврат'",
+        reply_markup=kb.as_markup()
+    )
+    
+    await state.set_state(AdminStates.waiting_for_mass_return_books)
+    await callback.answer()
+
+@router.message(AdminStates.waiting_for_mass_return_books)
+async def process_mass_return_books(message: types.Message, state: FSMContext):
+    try:
+        if not message.photo:
+            # Добавляем клавиатуру с кнопками
+            kb = InlineKeyboardBuilder()
+            kb.button(text="✅ Завершить возврат", callback_data="finish_mass_return")
+            kb.button(text="❌ Отменить возврат", callback_data="cancel_mass_return")
+            kb.adjust(1)
+            
+            await message.answer(
+                "❌ Пожалуйста, отправьте фото QR-кода учебника",
+                reply_markup=kb.as_markup()
+            )
+            return
+            
+        # Обработка QR-кода
+        photo = await message.bot.get_file(message.photo[-1].file_id)
+        photo_bytes = await message.bot.download_file(photo.file_path)
+        nparr = np.frombuffer(photo_bytes.read(), np.uint8)
+        image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        decoded_objects = decode(image)
+        
+        if not decoded_objects:
+            # Добавляем клавиатуру с кнопками
+            kb = InlineKeyboardBuilder()
+            kb.button(text="✅ Завершить возврат", callback_data="finish_mass_return")
+            kb.button(text="❌ Отменить возврат", callback_data="cancel_mass_return")
+            kb.adjust(1)
+            
+            await message.answer(
+                "❌ QR-код не найден. Попробуйте еще раз",
+                reply_markup=kb.as_markup()
+            )
+            return
+            
+        copy_id = int(decoded_objects[0].data.decode('utf-8').split('.')[0])
+        
+        with get_db() as conn:
+            cursor = conn.cursor()
+            
+            # Проверяем статус книги
+            cursor.execute("""
+                SELECT 
+                    bc.id,
+                    b.title,
+                    b.author,
+                    bb.id as borrow_id,
+                    bb.user_id,
+                    u.full_name,
+                    bb.status
+                FROM book_copies bc
+                JOIN books b ON bc.book_id = b.id
+                LEFT JOIN borrowed_books bb ON bb.copy_id = bc.id AND bb.status = 'borrowed'
+                LEFT JOIN users u ON bb.user_id = u.id
+                WHERE bc.id = ?
+            """, (copy_id,))
+            
+            book = cursor.fetchone()
+            
+            if not book:
+                # Добавляем клавиатуру с кнопками
+                kb = InlineKeyboardBuilder()
+                kb.button(text="✅ Завершить возврат", callback_data="finish_mass_return")
+                kb.button(text="❌ Отменить возврат", callback_data="cancel_mass_return")
+                kb.adjust(1)
+                
+                await message.answer(
+                    "❌ Книга не найдена в базе данных",
+                    reply_markup=kb.as_markup()
+                )
+                return
+                
+            copy_id, title, author, borrow_id, user_id, user_name, status = book
+            
+            if not borrow_id or status != 'borrowed':
+                # Добавляем клавиатуру с кнопками
+                kb = InlineKeyboardBuilder()
+                kb.button(text="✅ Завершить возврат", callback_data="finish_mass_return")
+                kb.button(text="❌ Отменить возврат", callback_data="cancel_mass_return")
+                kb.adjust(1)
+                
+                await message.answer(
+                    "❌ Эта книга не числится как выданная",
+                    reply_markup=kb.as_markup()
+                )
+                return
+            
+            # Получаем текущий список отсканированных книг
+            data = await state.get_data()
+            scanned_books = data.get('scanned_books', [])
+            
+            # Проверяем, не была ли эта книга уже отсканирована
+            if any(book['copy_id'] == copy_id for book in scanned_books):
+                # Добавляем клавиатуру с кнопками
+                kb = InlineKeyboardBuilder()
+                kb.button(text="✅ Завершить возврат", callback_data="finish_mass_return")
+                kb.button(text="❌ Отменить возврат", callback_data="cancel_mass_return")
+                kb.adjust(1)
+                
+                await message.answer(
+                    "❌ Этот учебник уже был отсканирован",
+                    reply_markup=kb.as_markup()
+                )
+                return
+            
+            # Добавляем книгу в список
+            scanned_books.append({
+                'copy_id': copy_id,
+                'borrow_id': borrow_id,
+                'title': title,
+                'author': author,
+                'user_id': user_id,
+                'user_name': user_name
+            })
+            
+            # Обновляем данные в состоянии
+            await state.update_data(scanned_books=scanned_books)
+            
+            # Добавляем клавиатуру с кнопками
+            kb = InlineKeyboardBuilder()
+            kb.button(text="✅ Завершить возврат", callback_data="finish_mass_return")
+            kb.button(text="❌ Отменить возврат", callback_data="cancel_mass_return")
+            kb.adjust(1)
+            
+            # Отправляем подтверждение
+            await message.answer(
+                f"✅ Учебник добавлен в список для возврата:\n"
+                f"📖 {title} - {author}\n"
+                f"👤 Был выдан: {user_name or f'ID: {user_id}'}\n\n"
+                f"📚 Всего отсканировано: {len(scanned_books)} шт.\n\n"
+                f"Отсканируйте следующий учебник или нажмите 'Завершить возврат'",
+                reply_markup=kb.as_markup()
+            )
+            
+    except Exception as e:
+        logging.error(f"Error in process_mass_return_books: {e}")
+        # Добавляем клавиатуру с кнопками даже при ошибке
+        kb = InlineKeyboardBuilder()
+        kb.button(text="✅ Завершить возврат", callback_data="finish_mass_return")
+        kb.button(text="❌ Отменить возврат", callback_data="cancel_mass_return")
+        kb.adjust(1)
+        
+        await message.answer(
+            "❌ Произошла ошибка при обработке QR-кода",
+            reply_markup=kb.as_markup()
+        )
+
+@router.callback_query(F.data == "finish_mass_return")
+async def finish_mass_return(callback: types.CallbackQuery, state: FSMContext):
+    try:
+        data = await state.get_data()
+        scanned_books = data.get('scanned_books', [])
+        
+        if not scanned_books:
+            await callback.answer("❌ Не было отсканировано ни одного учебника", show_alert=True)
+            return
+        
+        returned_count = 0
+        with get_db() as conn:
+            cursor = conn.cursor()
+            
+            # Начинаем транзакцию
+            cursor.execute("BEGIN")
+            
+            try:
+                for book in scanned_books:
+                    # Обновляем статус заимствования
+                    cursor.execute("""
+                        UPDATE borrowed_books 
+                        SET status = 'returned', return_date = datetime('now')
+                        WHERE id = ?
+                    """, (book['borrow_id'],))
+                    
+                    # Обновляем статус копии
+                    cursor.execute("""
+                        UPDATE book_copies 
+                        SET status = 'available' 
+                        WHERE id = ?
+                    """, (book['copy_id'],))
+                
+                    # Отправляем уведомление пользователю
+                    try:
+                        await callback.bot.send_message(
+                            book['user_id'],
+                            f"📚 Спасибо, что вернули учебник:\n"
+                            f"«{book['title']}»\n\n"
+                            f"Ждем вас снова! 😊"
+                        )
+                    except Exception as e:
+                        logging.error(f"Error sending notification to user: {e}")
+                    
+                    returned_count += 1
+                
+                # Подтверждаем транзакцию
+                conn.commit()
+                
+            except Exception as e:
+                # В случае ошибки откатываем транзакцию
+                cursor.execute("ROLLBACK")
+                logging.error(f"Error in transaction: {e}")
+                await callback.answer("❌ Произошла ошибка при возврате учебников", show_alert=True)
+                return
+        
+        # Отправляем итоговое сообщение
+        await callback.message.edit_text(
+            f"✅ Возврат учебников завершен\n\n"
+            f"📚 Всего возвращено: {returned_count} шт."
+        )
+        
+        # Предлагаем принять учебники от другого ученика
+        kb = InlineKeyboardBuilder()
+        kb.button(text="📚 Принять учебники от другого ученика", callback_data="mass_return")
+        kb.button(text="🔙 Вернуться в меню", callback_data="back_to_menu")
+        kb.adjust(1)
+        
+        await callback.message.answer(
+            "Выберите дальнейшее действие:",
+            reply_markup=kb.as_markup()
+        )
+        
+        # Очищаем состояние
+        await state.clear()
+        
+    except Exception as e:
+        logging.error(f"Error in finish_mass_return: {e}")
+        await callback.answer("❌ Произошла ошибка при завершении возврата", show_alert=True)
+
+@router.callback_query(F.data == "cancel_mass_return")
+async def cancel_mass_return(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.edit_text("❌ Операция возврата учебников отменена")
+    await callback.message.answer(
+        "🔐 Панель администратора\n\n"
+        "Выберите нужное действие:",
+        reply_markup=get_admin_keyboard()
+    )
+
+@router.callback_query(F.data == "back_to_menu")
+async def back_to_menu(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.answer(
+        "🔐 Панель администратора\n\n"
+        "Выберите нужное действие:",
+        reply_markup=get_admin_keyboard()
+    )
+    await callback.answer() 

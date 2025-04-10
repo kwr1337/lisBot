@@ -1,0 +1,257 @@
+{% extends "base.html" %}
+
+{% block title %}Профиль школы - Админ-панель библиотеки{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <!-- Заголовок и кнопки -->
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1>Профиль школы</h1>
+        <div>
+            <button type="button" class="btn btn-primary" id="saveChanges">
+                💾 Сохранить изменения
+            </button>
+        </div>
+    </div>
+    
+    <div class="row">
+        <!-- Логотип школы -->
+        <div class="col-md-4 mb-4">
+            <div class="card h-100">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="card-title mb-0">Логотип школы</h5>
+                </div>
+                <div class="card-body text-center">
+                    <div class="mb-4">
+                        {% if school.logo_url %}
+                            <img src="{{ school.logo_url }}" alt="Логотип школы" class="img-fluid mb-3" style="max-height: 200px;">
+                        {% else %}
+                            <div class="border p-5 mb-3 text-muted">
+                                <i class="fas fa-school" style="font-size: 5rem;">🏫</i>
+                                <p>Логотип не загружен</p>
+                            </div>
+                        {% endif %}
+                    </div>
+                    
+                    <div class="mt-3">
+                        <form id="logoForm">
+                            <div class="input-group">
+                                <input type="file" class="form-control" id="schoolLogo" name="logo" accept="image/*">
+                                <button class="btn btn-primary" type="button" id="uploadLogo">Загрузить</button>
+                            </div>
+                            <small class="form-text text-muted">Рекомендуемый размер: 300x300 пикселей</small>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Информация о школе -->
+        <div class="col-md-8 mb-4">
+            <div class="card h-100">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="card-title mb-0">Информация о школе</h5>
+                </div>
+                <div class="card-body">
+                    <form id="schoolInfoForm">
+                        <div class="mb-3">
+                            <label for="schoolName" class="form-label">Название учебного заведения</label>
+                            <input type="text" class="form-control" id="schoolName" name="name" value="{{ school.name|default('') }}" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="schoolType" class="form-label">Тип учреждения</label>
+                            <select class="form-select" id="schoolType" name="type">
+                                <option value="school" {% if school.type == 'school' %}selected{% endif %}>Общеобразовательная школа</option>
+                                <option value="gymnasium" {% if school.type == 'gymnasium' %}selected{% endif %}>Гимназия</option>
+                                <option value="lyceum" {% if school.type == 'lyceum' %}selected{% endif %}>Лицей</option>
+                                <option value="college" {% if school.type == 'college' %}selected{% endif %}>Колледж</option>
+                                <option value="university" {% if school.type == 'university' %}selected{% endif %}>Университет</option>
+                                <option value="other" {% if school.type == 'other' %}selected{% endif %}>Другое</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label for="schoolAddress" class="form-label">Адрес</label>
+                            <input type="text" class="form-control" id="schoolAddress" name="address" value="{{ school.address|default('') }}">
+                        </div>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="schoolPhone" class="form-label">Телефон</label>
+                                    <input type="tel" class="form-control" id="schoolPhone" name="phone" value="{{ school.phone|default('') }}">
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="schoolEmail" class="form-label">Email</label>
+                                    <input type="email" class="form-control" id="schoolEmail" name="email" value="{{ school.email|default('') }}">
+                                </div>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="schoolWebsite" class="form-label">Сайт</label>
+                            <input type="url" class="form-control" id="schoolWebsite" name="website" value="{{ school.website|default('') }}">
+                        </div>
+                        <div class="mb-3">
+                            <label for="schoolDirector" class="form-label">Директор</label>
+                            <input type="text" class="form-control" id="schoolDirector" name="director" value="{{ school.director|default('') }}">
+                        </div>
+                        <div class="mb-3">
+                            <label for="schoolDescription" class="form-label">Описание</label>
+                            <textarea class="form-control" id="schoolDescription" name="description" rows="4">{{ school.description|default('') }}</textarea>
+                            <small class="form-text text-muted">Краткая информация о школе, которая будет отображаться в футере сайта библиотеки</small>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Общая информация -->
+    <div class="row">
+        <div class="col-12 mb-4">
+            <div class="card">
+                <div class="card-header bg-info text-white">
+                    <h5 class="card-title mb-0">Общая информация</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-3 mb-3">
+                            <div class="border rounded p-3 text-center">
+                                <h6>Учащихся</h6>
+                                <h2 class="mb-0">{{ stats.students_count|default('0') }}</h2>
+                            </div>
+                        </div>
+                        <div class="col-md-3 mb-3">
+                            <div class="border rounded p-3 text-center">
+                                <h6>Учителей</h6>
+                                <h2 class="mb-0">{{ stats.teachers_count|default('0') }}</h2>
+                            </div>
+                        </div>
+                        <div class="col-md-3 mb-3">
+                            <div class="border rounded p-3 text-center">
+                                <h6>Книг</h6>
+                                <h2 class="mb-0">{{ stats.books_count|default('0') }}</h2>
+                            </div>
+                        </div>
+                        <div class="col-md-3 mb-3">
+                            <div class="border rounded p-3 text-center">
+                                <h6>Выдано книг</h6>
+                                <h2 class="mb-0">{{ stats.borrowed_books|default('0') }}</h2>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Контейнер для уведомлений -->
+<div id="toast-container" class="position-fixed bottom-0 end-0 p-3" style="z-index: 11"></div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Сохранение изменений
+    document.getElementById('saveChanges').addEventListener('click', function() {
+        saveSchoolInfo();
+    });
+    
+    // Загрузка логотипа
+    document.getElementById('uploadLogo').addEventListener('click', function() {
+        const logoInput = document.getElementById('schoolLogo');
+        if (logoInput.files.length > 0) {
+            const formData = new FormData();
+            formData.append('logo', logoInput.files[0]);
+            
+            fetch('/admin/school/upload-logo', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showToast('Логотип успешно загружен', 'success');
+                    setTimeout(() => location.reload(), 1500);
+                } else {
+                    showToast(data.error || 'Ошибка при загрузке логотипа', 'error');
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                showToast('Ошибка при загрузке логотипа', 'error');
+            });
+        } else {
+            showToast('Пожалуйста, выберите файл', 'warning');
+        }
+    });
+});
+
+function saveSchoolInfo() {
+    const formData = new FormData(document.getElementById('schoolInfoForm'));
+    
+    fetch('/admin/school/update-info', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            showToast('Информация о школе успешно сохранена', 'success');
+        } else {
+            showToast(data.error || 'Ошибка при сохранении информации о школе', 'error');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        showToast('Ошибка при сохранении информации о школе', 'error');
+    });
+}
+
+// Функция для отображения уведомлений
+function showToast(message, type = 'success') {
+    const toastId = 'toast-' + Date.now();
+    const bgClass = type === 'success' ? 'bg-success' : 
+                     type === 'error' ? 'bg-danger' : 
+                     type === 'warning' ? 'bg-warning' : 'bg-info';
+    
+    const toastHTML = `
+        <div id="${toastId}" class="toast show" role="alert" aria-live="assertive" aria-atomic="true" data-bs-autohide="true" data-bs-delay="3000">
+            <div class="toast-header ${bgClass} text-white">
+                <strong class="me-auto">
+                    ${type === 'success' ? 'Успешно' : 
+                      type === 'error' ? 'Ошибка' : 
+                      type === 'warning' ? 'Предупреждение' : 'Информация'}
+                </strong>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="toast" aria-label="Close"></button>
+            </div>
+            <div class="toast-body">
+                ${message}
+            </div>
+        </div>
+    `;
+    
+    document.getElementById('toast-container').insertAdjacentHTML('beforeend', toastHTML);
+    const toastElement = document.getElementById(toastId);
+    
+    // Альтернативный способ инициализации и отображения Toast
+    try {
+        const toast = new bootstrap.Toast(toastElement);
+        toast.show();
+    } catch (e) {
+        console.error('Ошибка при отображении уведомления:', e);
+        // Если Bootstrap Toast не работает, добавим класс show вручную
+        toastElement.classList.add('show');
+        
+        // И удалим его через 3 секунды
+        setTimeout(() => {
+            toastElement.remove();
+        }, 3000);
+    }
+    
+    // Удаляем уведомление после скрытия
+    toastElement.addEventListener('hidden.bs.toast', function () {
+        toastElement.remove();
+    });
+}
+</script>
+{% endblock %} 

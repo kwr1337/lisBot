@@ -1,0 +1,329 @@
+{% extends "base.html" %}
+
+{% block title %}Просроченные книги - Library Admin{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2 class="mb-0">
+            <span class="text-danger">⏱️</span> Просроченные книги
+        </h2>
+        <a href="/books" class="btn btn-outline-primary">
+            <i class="fas fa-arrow-left"></i> Назад к книгам
+        </a>
+    </div>
+
+    <!-- Фильтры -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <form method="get" action="/overdue-books">
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        <label for="search" class="form-label">Поиск по названию/автору/ученику</label>
+                        <input type="text" class="form-control" id="search" name="search" value="{{ search_query }}">
+                    </div>
+                    <div class="col-md-3">
+                        <label for="class_filter" class="form-label">Класс</label>
+                        <select class="form-select" id="class_filter" name="class">
+                            <option value="">Все классы</option>
+                            {% for class_name in classes %}
+                                <option value="{{ class_name }}" {% if class_filter == class_name %}selected{% endif %}>{{ class_name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label for="days_overdue" class="form-label">Дней просрочки</label>
+                        <select class="form-select" id="days_overdue" name="days">
+                            <option value="">Любое количество</option>
+                            <option value="7" {% if days_filter == 7 %}selected{% endif %}>Более 7 дней</option>
+                            <option value="14" {% if days_filter == 14 %}selected{% endif %}>Более 14 дней</option>
+                            <option value="30" {% if days_filter == 30 %}selected{% endif %}>Более 30 дней</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2 d-flex align-items-end">
+                        <button type="submit" class="btn btn-primary w-100">Применить</button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    {% if overdue_books %}
+        <div class="alert alert-info">
+            Показано {{ overdue_books|length }} просроченных книг из {{ total_overdue }} всего
+        </div>
+
+        <!-- Таблица просроченных книг -->
+        <div class="table-responsive">
+            <table class="table table-striped table-hover">
+                <thead class="table-light">
+                    <tr>
+                        <th scope="col">Название книги</th>
+                        <th scope="col">Автор</th>
+                        <th scope="col">ФИО ученика</th>
+                        <th scope="col">Класс</th>
+                        <th scope="col">Дата выдачи</th>
+                        <th scope="col">Дата возврата</th>
+                        <th scope="col" class="text-danger">Дней просрочено</th>
+                        <!-- <th scope="col">Действия</th> -->
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for book in overdue_books %}
+                    <tr>
+                        <td>{{ book.title }}</td>
+                        <td>{{ book.author }}</td>
+                        <td>{{ book.student_name }}</td>
+                        <td>{{ book.class }}</td>
+                        <td>{{ book.borrow_date }}</td>
+                        <td>{{ book.return_date }}</td>
+                        <td class="text-danger fw-bold">{{ book.days_overdue }}</td>
+                        <!-- <td>
+                            <div class="btn-group btn-group-sm">
+                                <button 
+                                    class="btn btn-success" 
+                                    onclick="markAsReturned({{ book.borrowed_id }})" 
+                                    data-bs-toggle="tooltip" 
+                                    title="Отметить как возвращённую">
+                                    ✓
+                                </button>
+                                <button 
+                                    class="btn btn-primary" 
+                                    onclick="extendReturnDate({{ book.borrowed_id }})" 
+                                    data-bs-toggle="tooltip" 
+                                    title="Продлить срок">
+                                    🗓️
+                                </button>
+                                <button 
+                                    class="btn btn-warning" 
+                                    onclick="sendReminder({{ book.user_id }}, {{ book.borrowed_id }})" 
+                                    data-bs-toggle="tooltip" 
+                                    title="Отправить напоминание">
+                                    📩
+                                </button>
+                            </div>
+                        </td> -->
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Пагинация -->
+        {% if total_pages > 1 %}
+        <nav aria-label="Page navigation" class="mt-4">
+            <ul class="pagination justify-content-center">
+                <li class="page-item {% if current_page == 1 %}disabled{% endif %}">
+                    <a class="page-link" href="?page=1&search={{ search_query }}&class={{ class_filter }}&days={{ days_filter }}" aria-label="First">
+                        <span aria-hidden="true">««</span>
+                    </a>
+                </li>
+                <li class="page-item {% if current_page == 1 %}disabled{% endif %}">
+                    <a class="page-link" href="?page={{ current_page - 1 }}&search={{ search_query }}&class={{ class_filter }}&days={{ days_filter }}" aria-label="Previous">
+                        <span aria-hidden="true">«</span>
+                    </a>
+                </li>
+                
+                {% for page in range(max(1, current_page - 2), min(total_pages + 1, current_page + 3)) %}
+                <li class="page-item {% if page == current_page %}active{% endif %}">
+                    <a class="page-link" href="?page={{ page }}&search={{ search_query }}&class={{ class_filter }}&days={{ days_filter }}">{{ page }}</a>
+                </li>
+                {% endfor %}
+                
+                <li class="page-item {% if current_page == total_pages %}disabled{% endif %}">
+                    <a class="page-link" href="?page={{ current_page + 1 }}&search={{ search_query }}&class={{ class_filter }}&days={{ days_filter }}" aria-label="Next">
+                        <span aria-hidden="true">»</span>
+                    </a>
+                </li>
+                <li class="page-item {% if current_page == total_pages %}disabled{% endif %}">
+                    <a class="page-link" href="?page={{ total_pages }}&search={{ search_query }}&class={{ class_filter }}&days={{ days_filter }}" aria-label="Last">
+                        <span aria-hidden="true">»»</span>
+                    </a>
+                </li>
+            </ul>
+        </nav>
+        {% endif %}
+    {% else %}
+        <div class="alert alert-success">
+            <i class="fas fa-check-circle"></i> На данный момент нет просроченных книг.
+        </div>
+    {% endif %}
+</div>
+
+<!-- Модальное окно для продления срока возврата -->
+<div class="modal fade" id="extendDateModal" tabindex="-1" aria-labelledby="extendDateModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="extendDateModalLabel">Продлить срок возврата</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="extendDateForm">
+                    <input type="hidden" id="borrowed_id_extend" name="borrowed_id">
+                    <div class="mb-3">
+                        <label for="new_return_date" class="form-label">Новая дата возврата</label>
+                        <input type="date" class="form-control" id="new_return_date" name="new_return_date" required>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                <button type="button" class="btn btn-primary" onclick="submitExtendDate()">Сохранить</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Контейнер для уведомлений -->
+<div id="toast-container" class="position-fixed bottom-0 end-0 p-3" style="z-index: 11">
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Инициализация тултипов
+    var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'))
+    var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+        return new bootstrap.Tooltip(tooltipTriggerEl)
+    });
+});
+
+function markAsReturned(borrowedId) {
+    if (confirm('Отметить книгу как возвращенную?')) {
+        fetch(`/borrowed-books/${borrowedId}/return`, {
+            method: 'POST'
+        })
+        .then(response => {
+            if (response.ok) {
+                showToast('Книга успешно отмечена как возвращенная', 'success');
+                setTimeout(() => location.reload(), 1500);
+            } else {
+                showToast('Ошибка при обновлении статуса книги', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Ошибка:', error);
+            showToast('Произошла ошибка сети или сервера', 'error');
+        });
+    }
+}
+
+function extendReturnDate(borrowedId) {
+    // Установка значения borrowed_id в форме
+    document.getElementById('borrowed_id_extend').value = borrowedId;
+    
+    // Установка минимальной даты на завтра
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const minDate = tomorrow.toISOString().split('T')[0];
+    document.getElementById('new_return_date').min = minDate;
+    
+    // Установка значения по умолчанию на две недели вперед
+    const twoWeeksLater = new Date();
+    twoWeeksLater.setDate(twoWeeksLater.getDate() + 14);
+    const defaultDate = twoWeeksLater.toISOString().split('T')[0];
+    document.getElementById('new_return_date').value = defaultDate;
+    
+    // Показать модальное окно
+    const modal = new bootstrap.Modal(document.getElementById('extendDateModal'));
+    modal.show();
+}
+
+function submitExtendDate() {
+    const borrowedId = document.getElementById('borrowed_id_extend').value;
+    const newReturnDate = document.getElementById('new_return_date').value;
+    
+    fetch(`/borrowed-books/${borrowedId}/extend`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            new_return_date: newReturnDate
+        })
+    })
+    .then(response => {
+        if (response.ok) {
+            showToast('Дата возврата успешно продлена', 'success');
+            setTimeout(() => location.reload(), 1500);
+        } else {
+            showToast('Ошибка при продлении даты возврата', 'error');
+        }
+    })
+    .catch(error => {
+        console.error('Ошибка:', error);
+        showToast('Произошла ошибка сети или сервера', 'error');
+    });
+    
+    // Закрыть модальное окно
+    const modal = bootstrap.Modal.getInstance(document.getElementById('extendDateModal'));
+    modal.hide();
+}
+
+function sendReminder(userId, borrowedId) {
+    if (confirm('Отправить напоминание ученику о необходимости вернуть книгу?')) {
+        fetch(`/users/${userId}/send-reminder`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                borrowed_id: borrowedId
+            })
+        })
+        .then(response => {
+            if (response.ok) {
+                showToast('Напоминание успешно отправлено', 'success');
+            } else {
+                showToast('Ошибка при отправке напоминания', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Ошибка:', error);
+            showToast('Произошла ошибка сети или сервера', 'error');
+        });
+    }
+}
+
+// Функция для отображения уведомлений
+function showToast(message, type = 'success') {
+    const toastId = 'toast-' + Date.now();
+    const bgClass = type === 'success' ? 'bg-success' : type === 'error' ? 'bg-danger' : 'bg-primary';
+    
+    const toastHTML = `
+        <div id="${toastId}" class="toast show" role="alert" aria-live="assertive" aria-atomic="true" data-bs-autohide="true" data-bs-delay="3000">
+            <div class="toast-header ${bgClass} text-white">
+                <strong class="me-auto">${type === 'success' ? 'Успешно' : type === 'error' ? 'Ошибка' : 'Уведомление'}</strong>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="toast" aria-label="Close"></button>
+            </div>
+            <div class="toast-body">
+                ${message}
+            </div>
+        </div>
+    `;
+    
+    document.getElementById('toast-container').insertAdjacentHTML('beforeend', toastHTML);
+    const toastElement = document.getElementById(toastId);
+    
+    // Альтернативный способ инициализации и отображения Toast
+    try {
+        const toast = new bootstrap.Toast(toastElement);
+        toast.show();
+    } catch (e) {
+        console.error('Ошибка при отображении уведомления:', e);
+        // Если Bootstrap Toast не работает, добавим класс show вручную
+        toastElement.classList.add('show');
+        
+        // И удалим его через 3 секунды
+        setTimeout(() => {
+            toastElement.remove();
+        }, 3000);
+    }
+    
+    // Удаляем уведомление после скрытия
+    toastElement.addEventListener('hidden.bs.toast', function () {
+        toastElement.remove();
+    });
+}
+</script>
+{% endblock %} 

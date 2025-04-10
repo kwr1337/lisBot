@@ -13,6 +13,10 @@ class AdminStates(StatesGroup):
     waiting_for_return_books = State() # Для массового возврата
     waiting_for_book_selection = State()  # Для выбора книги из списка забронированных
     waiting_for_book_qr = State()        # Для сканирования QR выбранной книги
+    waiting_for_direct_issue_student = State()  # Для сканирования QR ученика при прямой выдаче
+    waiting_for_direct_issue_book = State()     # Для сканирования QR книги при прямой выдаче
+    waiting_for_mass_return_student = State()  # Для сканирования QR ученика при массовом возврате
+    waiting_for_mass_return_books = State()    # Для сканирования QR книг при массовом возврате
 
 class AdminManageStates(StatesGroup):
     waiting_for_new_admin_id = State()
