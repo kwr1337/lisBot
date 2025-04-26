@@ -317,7 +317,7 @@ async def web_panel(message: types.Message):
     
     add_token(token, message.from_user.id, expires)
     
-    panel_url = f"http://localhost:8000/login?token={token}"
+    panel_url = f"http://45.10.41.224:3080/login?token={token}"
     
     await message.answer(
         "🌐 Доступ к веб-панели:\n\n"
