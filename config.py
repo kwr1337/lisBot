@@ -1,4 +1,4 @@
-BOT_TOKEN = '7871841855:AAE2nanK3d77kzl05hzI9BqQzuBOQOXZ17w'
+BOT_TOKEN = '8170950920:AAFZe0N3gKxhXIKsaGL3KW3gaYeTItnGfzY'
 DATABASE_PATH = 'library.db'
 
 # URL веб-панели администратора
