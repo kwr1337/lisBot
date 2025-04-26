@@ -4,7 +4,7 @@ from fastapi.staticfiles import StaticFiles
 from routes import router
 from database.models import init_admin_logs_table
 import logging
-from admin_panel.routes import router as admin_router
+from routes import router as admin_router
 
 logging.basicConfig(
     level=logging.INFO,

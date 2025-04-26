@@ -8,7 +8,9 @@ class AdminStates(StatesGroup):
     waiting_for_user_id = State()
     waiting_for_qr = State()
     waiting_for_return_qr = State()
-    waiting_for_student_qr = State()  # Для сканирования QR ученика
+    waiting_for_single_issue_student = State()  # Для выдачи одной книги - студент
+    waiting_for_single_issue_book = State()     # Для выдачи одной книги - книга
+    waiting_for_student_qr = State()  # Для сканирования QR ученика при массовой выдаче
     waiting_for_books_qr = State()    # Для сканирования QR книг
     waiting_for_return_books = State() # Для массового возврата
     waiting_for_book_selection = State()  # Для выбора книги из списка забронированных

@@ -254,19 +254,21 @@
         .qr-content {
             position: relative !important;
             padding: 0 !important;
-            width: 100% !important;
-            height: 100% !important;
+            width: 42mm !important;
+            height: 42mm !important;
             display: flex !important;
             flex-direction: column !important;
             justify-content: center !important;
             align-items: center !important;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
         
         .qr-code {
             margin: 0 auto !important;
             padding: 0 !important;
-            width: 100% !important;
-            height: 100% !important;
+            width: 42mm !important;
+            height: 42mm !important;
             display: flex !important;
             justify-content: center !important;
             align-items: center !important;
@@ -284,10 +286,10 @@
         }
         
         .qr-content:before {
-            content: "ID экземпляра: " attr(data-id) !important;
+            content: "ID: " attr(data-id) !important;
             display: block !important;
             text-align: center !important;  
-            margin-bottom: -5mm !important;
+            /* margin-bottom: -5mm !important; */
             margin-top: 0 !important;
             padding-top: 0 !important;
             font-size: 8pt !important;
@@ -295,32 +297,38 @@
             z-index: 10 !important;
             width: 100% !important;
             position: absolute !important;
-            top: 1mm !important;
+            top: 0 !important;
         }
         
         .qr-content:after {
-            content: "Автор: " attr(data-author) !important;
+            content: attr(data-author) !important;
+            font-size: 6pt !important;
+            overflow: hidden !important;
+            text-overflow: ellipsis !important;
+            max-width: 28mm !important;
+            max-height: 28mm !important;
+            white-space: nowrap !important;
             position: absolute !important;
             left: 0 !important;
-            top: 30% !important;
+            /* top: 30% !important; */
+            text-align: center !important;
             writing-mode: vertical-rl !important;
             transform: rotate(180deg) !important;
-            font-size: 8pt !important;
-            white-space: nowrap !important;
-            margin-left: 0 !important;
-            padding-left: 0 !important;
         }
         
         .qr-code:after {
-            content: "Название: " attr(data-title) !important;
+            content: attr(data-title) !important;
+            font-size: 6pt !important;
+            overflow: hidden !important;
+            text-overflow: ellipsis !important;
+            max-width: 28mm !important;
+            max-height: 28mm !important;
+            white-space: nowrap !important;
             position: absolute !important;
             right: 0 !important;
-            top: 30% !important;
+            /* top: 30% !important; */
+            text-align: center !important;
             writing-mode: vertical-lr !important;
-            font-size: 8pt !important;
-            white-space: nowrap !important;
-            margin-right: 0 !important;
-            padding-right: 0 !important;
         }
         
         .qr-code-item {

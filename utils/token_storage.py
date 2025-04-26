@@ -5,7 +5,8 @@ from typing import Optional
 import logging
 import secrets
 
-TOKENS_FILE = "admin_tokens.json"
+# Используем абсолютный путь к файлу токенов
+TOKENS_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "admin_tokens.json")
 
 # Хранилище токенов в памяти
 tokens = {}
@@ -52,24 +53,6 @@ def generate_admin_token(user_id: int) -> str:
     save_tokens()
     return token
 
-def verify_token(token: str) -> Optional[int]:
-    """Проверяет токен и возвращает user_id если токен валидный"""
-    load_tokens()  # Загружаем актуальные токены
-    
-    if token not in tokens:
-        return None
-        
-    user_id, expires = tokens[token]  # Распаковываем кортеж
-    if datetime.now() > expires:  # expires уже datetime
-        del tokens[token]
-        save_tokens()
-        return None
-        
-    return user_id
-
-# Загружаем токены при импорте модуля
-load_tokens()
-
 def add_token(token: str, user_id: int, expires: datetime):
     tokens[token] = (user_id, expires)
     save_tokens()
@@ -82,6 +65,10 @@ def remove_token(token: str):
         logging.info(f"Removed token {token}")
 
 def verify_token(token: str) -> Optional[int]:
+    """Проверяет токен и возвращает user_id если токен валидный"""
+    # Загружаем актуальные токены
+    load_tokens()
+    
     if token not in tokens:
         logging.warning(f"Token {token} not found")
         return None
@@ -105,9 +92,20 @@ def cleanup_expired_tokens():
         logging.info(f"Cleaned up {len(expired)} expired tokens")
 
 def get_token_data(token: str) -> Optional[dict]:
-    tokens = load_tokens()
-    data = tokens.get(token)
-    if data:
-        if data[1] > datetime.now():
-            return {'user_id': data[0], 'expires': data[1]}
-    return None 
+    """Возвращает данные токена, если он существует и не истек"""
+    # Используем глобальные токены
+    global tokens
+    # Загружаем актуальные токены
+    load_tokens()
+    
+    if token not in tokens:
+        return None
+    
+    user_id, expires = tokens[token]
+    if expires > datetime.now():
+        return {'user_id': user_id, 'expires': expires}
+    
+    return None
+
+# Загружаем токены при импорте модуля
+load_tokens() 

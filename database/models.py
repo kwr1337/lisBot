@@ -27,7 +27,8 @@ def setup_database():
                     edition_number TEXT,
                     publication_year INTEGER,
                     publisher TEXT,
-                    quantity INTEGER DEFAULT 1)''')
+                    quantity INTEGER DEFAULT 1,
+                    isbn TEXT)''')
 
     cursor.execute('''CREATE TABLE IF NOT EXISTS book_copies
                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -166,6 +167,22 @@ def check_and_update_database():
         except Exception as e:
             logging.error(f"Error checking database: {e}")
             raise e
+    
+    # Проверяем наличие колонки isbn в таблице books
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT isbn FROM books LIMIT 1")
+    except:
+        try:
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute("ALTER TABLE books ADD COLUMN isbn TEXT")
+                conn.commit()
+                logging.info("Добавлена колонка isbn в таблицу books")
+        except Exception as e:
+            logging.error(f"Error adding isbn column to books table: {e}")
+            raise e
 
 def create_book_copies(cursor, book_id: int, quantity: int):
     """Создает записи экземпляров книги в таблице book_copies"""
@@ -187,7 +204,8 @@ def log_admin_action(admin_id: int, action_type: str, book_id: int = None, detai
             
     except Exception as e:
         logging.error(f"Error logging admin action: {e}")
-        raise e
+        # Не пробрасываем исключение дальше, чтобы не прерывать основной процесс
+        # raise e
 
 def migrate_borrowed_books():
     try:
